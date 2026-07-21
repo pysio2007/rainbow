@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
-import { ArrowUpRight, ChevronRight, CircleAlert, Compass, ExternalLink, Folder, Search, Sparkles } from 'lucide-react'
+import { ArrowUpRight, ChevronRight, CircleAlert, Compass, ExternalLink, FileAudio, FileImage, FileText, FileVideo, Folder, Search, Sparkles } from 'lucide-react'
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom'
+import type { FilePreviewType } from '@/lib/file-preview'
+import { resolveFilePreviewType } from '@/lib/file-preview'
 import { directoryApiPath, explorerPathToIpfsPath, gatewayPath, ipfsPathToExplorerPath, normalizeInput } from '@/lib/normalizer'
 import { parseVersionText } from '@/lib/version'
 
@@ -55,6 +57,24 @@ function Home() {
   </main><footer className="site-footer"><span>suse.cc / public IPFS gateway</span>{version && <span>{version.trim()}</span>}</footer></>
 }
 
+function FilePreview({ path, type }: { path: string; type: FilePreviewType }) {
+  const url = gatewayPath(path)
+  const name = decodeURIComponent(path.split('/').pop() || 'IPFS file')
+  const icon = type === 'image' ? <FileImage size={18} /> : type === 'audio' ? <FileAudio size={18} /> : type === 'video' ? <FileVideo size={18} /> : <FileText size={18} />
+  const label = type === 'unknown' ? 'Preview unavailable' : `${type.toUpperCase()} preview`
+
+  return <section className={`file-preview file-preview-${type}`} aria-label={`${label}: ${name}`}>
+    <div className="file-preview-heading"><div className="file-preview-label">{icon}<span>{label}</span></div><code title={name}>{name}</code></div>
+    {type === 'image' && <img className="preview-image" src={url} alt={name} />}
+    {type === 'audio' && <audio className="preview-audio" controls preload="metadata" src={url} aria-label={`Play ${name}`}>Your browser cannot play this audio file.</audio>}
+    {type === 'video' && <video className="preview-video" controls preload="metadata" src={url} aria-label={`Play ${name}`}>Your browser cannot play this video file.</video>}
+    {type === 'pdf' && <iframe className="preview-pdf" src={url} title={`Preview of ${name}`} />}
+    {type === 'unknown' && <div className="preview-unavailable"><FileText size={28} /><h2 id="file-preview-title">This file cannot be previewed here</h2><p>Open the native gateway to view or download this content.</p></div>}
+    {type !== 'unknown' && <p className="preview-fallback">Having trouble loading it? <a href={url}>Open native gateway <ArrowUpRight size={14} /></a></p>}
+    {type === 'unknown' && <a className="preview-open" href={url}>Open native gateway <ArrowUpRight size={14} /></a>}
+  </section>
+}
+
 function Explorer() {
   const params = useParams<{ '*': string }>()
   const location = useLocation()
@@ -66,17 +86,18 @@ function Explorer() {
   }
   const [directory, setDirectory] = useState<Directory | null>(null)
   const [error, setError] = useState(pathError)
+  const [previewType, setPreviewType] = useState<FilePreviewType | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     if (!rawPath) { setLoading(false); return }
     let active = true
-    setLoading(true); setError(''); setDirectory(null)
+    setLoading(true); setError(''); setDirectory(null); setPreviewType(null)
     let apiPath: string
     try { apiPath = directoryApiPath(rawPath) } catch { setError('This is not a valid immutable path.'); setLoading(false); return }
     fetch(`/_rainbow/api/v1/directory?path=${encodeURIComponent(apiPath)}`, { headers: { Accept: 'application/json' } })
-      .then(async (response) => { if (!response.ok) throw new Error((await response.json().catch(() => null))?.error?.code || 'Directory unavailable'); return response.json() })
-      .then((data: Directory) => { if (active) setDirectory(data) }).catch((caught) => { if (active) setError(caught instanceof Error ? caught.message : 'Directory unavailable') }).finally(() => { if (active) setLoading(false) })
+      .then(async (response) => { if (!response.ok) { const code = (await response.json().catch(() => null))?.error?.code || 'Directory unavailable'; throw new Error(code) }; return response.json() })
+      .then((data: Directory) => { if (active) setDirectory(data) }).catch((caught) => { if (!active) return; if (caught instanceof Error && caught.message === 'not_directory') setPreviewType(resolveFilePreviewType(rawPath)); else setError(caught instanceof Error ? caught.message : 'Directory unavailable') }).finally(() => { if (active) setLoading(false) })
     return () => { active = false }
   }, [rawPath])
 
@@ -86,6 +107,7 @@ function Explorer() {
     <div className="breadcrumbs"><Link to="/explore">Explorer</Link>{breadcrumb.map((part, index) => <span key={`${part}-${index}`}><ChevronRight size={14} /><Link to={ipfsPathToExplorerPath(`/ipfs/${breadcrumb.slice(0, index + 1).join('/')}`)}>{index === 0 ? `${part.slice(0, 12)}…` : part}</Link></span>)}</div>
     {loading && <div className="status"><div className="spinner" />Loading directory</div>}
     {error && <div className="status error-status"><CircleAlert size={18} /><div><strong>Could not open this directory</strong><p>{error.replaceAll('_', ' ')}</p><a href={gatewayPath(rawPath)}>Open it in the native gateway <ArrowUpRight size={14} /></a></div></div>}
+    {previewType && <FilePreview path={rawPath} type={previewType} />}
     {directory && <div className="directory-panel"><div className="directory-meta"><span>{directory.entries.length} {directory.entries.length === 1 ? 'entry' : 'entries'}</span><code>{directory.resolvedCid}</code></div>{directory.entries.length === 0 ? <div className="empty-list">This directory is empty.</div> : <div className="entry-list">{directory.entries.map((entry) => <Link className="entry" key={`${entry.name}-${entry.cid}`} to={ipfsPathToExplorerPath(`${rawPath}/${entry.name}`)}><span className="entry-name"><Folder size={18} />{entry.name}</span><code>{entry.cid}</code><ChevronRight size={17} /></Link>)}</div>}</div>}
     <p className="explorer-note">Directory view shows names and content identifiers only.</p>
   </main></>
