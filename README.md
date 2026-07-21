@@ -1,3 +1,7 @@
+> [!WARNING]
+> This is a suse.cc-specialized modification of Rainbow for a public IPFS HTTP
+> Gateway. It is not an official upstream Rainbow release.
+
 <h1 align="center">
   <br>
   <a href="https://github.com/ipfs/rainbow/assets/157609/fd1bed0f-2055-468e-93e7-0aea158aa953"><img src="https://github.com/ipfs/rainbow/assets/157609/8bf5b727-a360-4906-b965-826823c37aa3" alt="Rainbo logo" title="Rainbow logo" width="200"></a>
@@ -26,6 +30,11 @@ Rainbow is an implementation of the [IPFS HTTP Gateway API](https://specs.ipfs.t
 based on [boxo](https://github.com/ipfs/boxo) which is the tooling that powers [Kubo](https://github.com/ipfs/kubo) IPFS implementation.
 It uses the same Go code as the [HTTP gateway](https://specs.ipfs.tech/http-gateways/) in Kubo,
 but is fully specialized to just be a gateway:
+
+This is a suse.cc-specialized modification of Rainbow for operating a public
+IPFS HTTP Gateway. It retains upstream attribution and is distributed under
+the existing Apache-2.0 and MIT license terms; see
+[`LICENSE-APACHE`](./LICENSE-APACHE) and [`LICENSE-MIT`](./LICENSE-MIT).
 
   * Rainbow acts as [Amino DHT](https://blog.ipfs.tech/2023-09-amino-refactoring/)
     and [Bitswap](https://specs.ipfs.tech/bitswap-protocol/) client only.
