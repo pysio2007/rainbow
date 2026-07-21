@@ -154,7 +154,9 @@ func TestPeeringSharedCache(t *testing.T) {
 
 func testSeedPeering(t *testing.T, n int, dhtRouting DHTRouting, dhtSharedHost bool) ([]ic.PrivKey, []peer.ID, []*Node) {
 	cdns := newCachedDNS(dnsCacheRefreshInterval)
-	defer cdns.Close()
+	t.Cleanup(func() {
+		require.NoError(t, cdns.Close())
+	})
 
 	ctx := t.Context()
 
@@ -163,9 +165,21 @@ func testSeedPeering(t *testing.T, n int, dhtRouting DHTRouting, dhtSharedHost b
 
 	keys := make([]ic.PrivKey, n)
 	pids := make([]peer.ID, n)
+	ports := mustFreePorts(t, n)
+	listenAddrs := make([]multiaddr.Multiaddr, n)
 
 	for i := range n {
 		keys[i], pids[i] = mustTestPeerFromSeed(t, seed, i)
+		listenAddrs[i] = mustListenAddrWithPort(t, ports[i])
+	}
+	node0P2P, err := multiaddr.NewMultiaddr("/p2p/" + pids[0].String())
+	require.NoError(t, err)
+	bootstrapPeer := listenAddrs[0].Encapsulate(node0P2P).String()
+	bootstrapPeers := []string{bootstrapPeer}
+	for i := 1; i < n; i++ {
+		p2pAddr, err := multiaddr.NewMultiaddr("/p2p/" + pids[i].String())
+		require.NoError(t, err)
+		bootstrapPeers = append(bootstrapPeers, listenAddrs[i].Encapsulate(p2pAddr).String())
 	}
 
 	cfgs := make([]Config, n)
@@ -175,10 +189,6 @@ func testSeedPeering(t *testing.T, n int, dhtRouting DHTRouting, dhtSharedHost b
 		dnslinkResolver, err := gateway.NewDNSResolver(nil)
 		require.NoError(t, err)
 
-		// For seed peering tests, we don't need bootstrap peers
-		// The peers can find each other deterministically
-		var bootstrapPeers []string
-
 		cfgs[i] = Config{
 			DataDir:             t.TempDir(),
 			BlockstoreType:      "flatfs",
@@ -186,6 +196,7 @@ func testSeedPeering(t *testing.T, n int, dhtRouting DHTRouting, dhtSharedHost b
 			DHTSharedHost:       dhtSharedHost,
 			Bitswap:             true,
 			Bootstrap:           bootstrapPeers,
+			ListenAddrs:         []string{listenAddrs[i].String()},
 			Seed:                seed,
 			SeedIndex:           i,
 			SeedPeering:         true,
@@ -195,6 +206,7 @@ func testSeedPeering(t *testing.T, n int, dhtRouting DHTRouting, dhtSharedHost b
 
 		nodes[i], err = SetupWithLibp2p(ctx, cfgs[i], keys[i], cdns)
 		require.NoError(t, err)
+		registerTestNodeCleanup(t, nodes[i])
 	}
 
 	require.Eventually(t, func() bool {

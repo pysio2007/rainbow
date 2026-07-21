@@ -41,8 +41,12 @@ but is fully specialized to just be a gateway:
 ## Building
 
 ```
-go build
+make build
 ```
+
+`make build` builds the Vite WebUI with Bun and then embeds its `webui/dist`
+output in the Go binary. Bun 1.3.3 is required; install it from
+[bun.com](https://bun.com/) before building locally.
 
 ## Running
 
@@ -74,6 +78,17 @@ $ docker run --rm -it --net=host -e RAINBOW_SUBDOMAIN_GATEWAY_DOMAINS=dweb.link 
 ```
 
 See [`/docs/environment-variables.md`](./docs/environment-variables.md).
+
+### WebUI development
+
+Run `make dev` (or `make webui-dev`) to start the Vite development server.
+Run Rainbow separately when the UI needs its directory API or gateway
+content. `make test` runs the Go and WebUI test suites.
+
+The WebUI is served from `/` and `/explore` by the gateway. Its directory API
+is available at `/_rainbow/api/v1/directory` only with the literal
+`Host: 127.0.0.1:8090` host policy. This host check is routing isolation, not
+a security boundary; use listener binding and proxy policy for exposure.
 
 
 ## Configuration

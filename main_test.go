@@ -13,7 +13,9 @@ import (
 	"github.com/ipfs/boxo/ipld/unixfs/importer/balanced"
 	uih "github.com/ipfs/boxo/ipld/unixfs/importer/helpers"
 	"github.com/ipfs/go-cid"
+	dht "github.com/libp2p/go-libp2p-kad-dht"
 	ic "github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multicodec"
 	"github.com/stretchr/testify/assert"
@@ -72,7 +74,38 @@ func mustTestNodeWithKey(t *testing.T, cfg Config, sk ic.PrivKey) *Node {
 
 	nd, err := SetupWithLibp2p(ctx, cfg, sk, cdns)
 	require.NoError(t, err)
+	registerTestNodeCleanup(t, nd)
 	return nd
+}
+
+func registerTestNodeCleanup(t *testing.T, nd *Node) {
+	t.Helper()
+	t.Cleanup(func() {
+		if nd.bsrv != nil {
+			require.NoError(t, nd.bsrv.Close())
+		}
+
+		var dhtHost host.Host
+		switch routing := nd.vs.(type) {
+		case *dht.IpfsDHT:
+			dhtHost = routing.Host()
+			require.NoError(t, routing.Close())
+		case *bundledDHT:
+			dhtHost = routing.standard.Host()
+			require.NoError(t, routing.fullRT.Close())
+			require.NoError(t, routing.standard.Close())
+		}
+
+		if dhtHost != nil && dhtHost != nd.host {
+			require.NoError(t, dhtHost.Close())
+		}
+		if nd.host != nil {
+			require.NoError(t, nd.host.Close())
+		}
+		if nd.datastore != nil {
+			require.NoError(t, nd.datastore.Close())
+		}
+	})
 }
 
 func mustTestServer(t *testing.T, cfg Config) (*httptest.Server, *Node) {
@@ -84,6 +117,7 @@ func mustTestServer(t *testing.T, cfg Config) (*httptest.Server, *Node) {
 	}
 
 	ts := httptest.NewServer(handler)
+	t.Cleanup(ts.Close)
 	return ts, nd
 }
 

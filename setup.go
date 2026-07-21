@@ -237,6 +237,7 @@ func SetupNoLibp2p(ctx context.Context, cfg Config, dnsCache *cachedDNS) (*Node,
 		bsrv = blockservice.New(blkst, offline.Exchange(blkst))
 		bsrv = nopfsipfs.WrapBlockService(bsrv, blocker)
 	}
+	resolver := setupResolver(bsrv, blocker)
 
 	ns, err := setupNamesys(cfg, vs, blocker, cfg.DNSLinkResolver)
 	if err != nil {
@@ -249,6 +250,7 @@ func SetupNoLibp2p(ctx context.Context, cfg Config, dnsCache *cachedDNS) (*Node,
 		dataDir:      cfg.DataDir,
 		denylistSubs: denylists,
 		bsrv:         bsrv,
+		resolver:     resolver,
 	}, nil
 }
 
@@ -397,11 +399,7 @@ func SetupWithLibp2p(ctx context.Context, cfg Config, key crypto.PrivKey, dnsCac
 
 	bsrv = nopfsipfs.WrapBlockService(bsrv, blocker)
 
-	fetcherCfg := bsfetcher.NewFetcherConfig(bsrv)
-	fetcherCfg.PrototypeChooser = dagpb.AddSupportToChooser(bsfetcher.DefaultPrototypeChooser)
-	fetcher := fetcherCfg.WithReifier(unixfsnode.Reify)
-	r := resolver.NewBasicResolver(fetcher)
-	r = nopfsipfs.WrapResolver(r, blocker)
+	r := setupResolver(bsrv, blocker)
 
 	n.host = h
 	n.datastore = ds
@@ -417,6 +415,17 @@ func SetupWithLibp2p(ctx context.Context, cfg Config, key crypto.PrivKey, dnsCac
 	n.ns = ns
 
 	return n, nil
+}
+
+func setupResolver(bsrv blockservice.BlockService, blocker *nopfs.Blocker) resolver.Resolver {
+	if bsrv == nil {
+		return nil
+	}
+	fetcherCfg := bsfetcher.NewFetcherConfig(bsrv)
+	fetcherCfg.PrototypeChooser = dagpb.AddSupportToChooser(bsfetcher.DefaultPrototypeChooser)
+	fetcher := fetcherCfg.WithReifier(unixfsnode.Reify)
+	r := resolver.NewBasicResolver(fetcher)
+	return nopfsipfs.WrapResolver(r, blocker)
 }
 
 func setupDatastore(cfg Config) (datastore.Batching, error) {

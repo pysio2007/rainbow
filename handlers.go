@@ -1,35 +1,326 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"runtime"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
+	"unicode/utf8"
 
 	"github.com/ipfs/boxo/blockstore"
+	boxopath "github.com/ipfs/boxo/path"
 	leveldb "github.com/ipfs/go-ds-leveldb"
 	"github.com/ipfs/go-log/v2"
+	"github.com/ipfs/go-unixfsnode/directory"
+	"github.com/ipfs/go-unixfsnode/hamt"
+	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 
-	_ "embed"
 	_ "net/http/pprof"
 
 	"github.com/felixge/httpsnoop"
 	"github.com/ipfs/boxo/gateway"
+	boxoresolver "github.com/ipfs/boxo/path/resolver"
 	servertiming "github.com/mitchellh/go-server-timing"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
-//go:embed static/index.html
-var indexHTML []byte
+//go:embed all:webui/dist
+var webuiFS embed.FS
+
+const directoryAPIPath = "/_rainbow/api/v1/directory"
+
+var directorySemaphore = make(chan struct{}, 32)
+
+const maxDirectoryJSONSize = 2 << 20
+
+var errDirectoryJSONTooLarge = errors.New("directory JSON response too large")
+
+type directoryResponse struct {
+	Version     int              `json:"version"`
+	Path        string           `json:"path"`
+	ResolvedCID string           `json:"resolvedCid"`
+	Entries     []directoryEntry `json:"entries"`
+}
+
+type directoryEntry struct {
+	Name string `json:"name"`
+	CID  string `json:"cid"`
+}
+
+type directoryError struct {
+	Error struct {
+		Code string `json:"code"`
+	} `json:"error"`
+}
+
+func writeDirectoryError(w http.ResponseWriter, r *http.Request, status int, code string) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	var body directoryError
+	body.Error.Code = code
+	data, _ := json.Marshal(body)
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	w.WriteHeader(status)
+	if r.Method != http.MethodHead {
+		_, _ = w.Write(data)
+	}
+}
+
+func directoryHandler(cfg Config, nd *Node) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			writeDirectoryError(w, r, http.StatusMethodNotAllowed, "method_not_allowed")
+			return
+		}
+		if cfg.RemoteBackendMode == RemoteBackendCAR {
+			writeDirectoryError(w, r, http.StatusNotImplemented, "unsupported_mode")
+			return
+		}
+		select {
+		case directorySemaphore <- struct{}{}:
+			defer func() { <-directorySemaphore }()
+		default:
+			w.Header().Set("Retry-After", "1")
+			writeDirectoryError(w, r, http.StatusTooManyRequests, "busy")
+			return
+		}
+
+		rctx, cancel := context.WithTimeout(r.Context(), directoryTimeout(cfg.RetrievalTimeout))
+		defer cancel()
+		rawPath, ok := canonicalDirectoryQuery(r.URL.RawQuery)
+		if !ok {
+			writeDirectoryError(w, r, http.StatusBadRequest, "invalid_path")
+			return
+		}
+		body, status, code := enumerateDirectory(rctx, nd, rawPath)
+		if code != "" {
+			writeDirectoryError(w, r, status, code)
+			return
+		}
+		data, err := marshalDirectoryJSON(body)
+		if errors.Is(err, errDirectoryJSONTooLarge) {
+			writeDirectoryError(w, r, http.StatusRequestEntityTooLarge, "directory_too_large")
+			return
+		}
+		if err != nil {
+			writeDirectoryError(w, r, http.StatusInternalServerError, "internal")
+			return
+		}
+		etagInput := []byte(fmt.Sprintf("v1\x00%s\x00%s", body.Path, body.ResolvedCID))
+		hash := sha256.Sum256(etagInput)
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Cache-Control", "public, max-age=60")
+		w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+		w.Header().Set("ETag", fmt.Sprintf("\"v1-%x-%s-%s\"", hash[:8], strings.ReplaceAll(body.Path, "/", "_"), body.ResolvedCID))
+		w.WriteHeader(http.StatusOK)
+		if r.Method != http.MethodHead {
+			_, _ = w.Write(data)
+		}
+	})
+}
+
+type boundedJSONBuffer struct {
+	bytes.Buffer
+	limit int
+}
+
+func (b *boundedJSONBuffer) Write(p []byte) (int, error) {
+	if b.Len()+len(p) > b.limit {
+		return 0, errDirectoryJSONTooLarge
+	}
+	return b.Buffer.Write(p)
+}
+
+func marshalDirectoryJSON(body directoryResponse) ([]byte, error) {
+	var buf boundedJSONBuffer
+	buf.limit = maxDirectoryJSONSize
+	if err := json.NewEncoder(&buf).Encode(body); err != nil {
+		return nil, err
+	}
+	data := buf.Bytes()
+	if len(data) > 0 && data[len(data)-1] == '\n' {
+		data = data[:len(data)-1]
+	}
+	return data, nil
+}
+
+func canonicalDirectoryQuery(rawQuery string) (string, bool) {
+	parts := strings.Split(rawQuery, "&")
+	if len(parts) != 1 {
+		return "", false
+	}
+	keyValue := strings.SplitN(parts[0], "=", 2)
+	if len(keyValue) != 2 || keyValue[0] != "path" || keyValue[1] == "" {
+		return "", false
+	}
+	decoded, err := url.QueryUnescape(keyValue[1])
+	if err != nil || decoded == "" || "path="+url.QueryEscape(decoded) != rawQuery {
+		return "", false
+	}
+	return decoded, true
+}
+
+func directoryTimeout(configured time.Duration) time.Duration {
+	if configured > 0 && configured < 30*time.Second {
+		return configured
+	}
+	return 30 * time.Second
+}
+
+func enumerateDirectory(ctx context.Context, nd *Node, rawPath string) (directoryResponse, int, string) {
+	if len(rawPath) > 4096 || rawPath == "" || strings.HasSuffix(rawPath, "/") {
+		return directoryResponse{}, http.StatusBadRequest, "invalid_path"
+	}
+	p, err := boxopath.NewPath(rawPath)
+	if err != nil || p.Namespace() != boxopath.IPFSNamespace || p.String() != rawPath || len(p.Segments()) > 128 {
+		return directoryResponse{}, http.StatusBadRequest, "invalid_path"
+	}
+	ip, err := boxopath.NewImmutablePath(p)
+	if err != nil {
+		return directoryResponse{}, http.StatusBadRequest, "invalid_path"
+	}
+	if nd.resolver == nil {
+		return directoryResponse{}, http.StatusNotImplemented, "unsupported_mode"
+	}
+	node, link, err := nd.resolver.ResolvePath(ctx, ip)
+	if err != nil {
+		return directoryResponse{}, directoryStatus(ctx, err), directoryCode(err, ctx)
+	}
+	clink, ok := link.(cidlink.Link)
+	if !ok {
+		return directoryResponse{}, http.StatusInternalServerError, "internal"
+	}
+	if _, ok := node.(hamt.UnixFSHAMTShard); ok {
+		return directoryResponse{}, http.StatusNotImplemented, "unsupported_directory_kind"
+	}
+	dir, ok := node.(directory.UnixFSBasicDir)
+	if !ok {
+		return directoryResponse{}, http.StatusUnprocessableEntity, "not_directory"
+	}
+	entries := make([]directoryEntry, 0)
+	it := dir.Iterator()
+	for !it.Done() {
+		if err := ctx.Err(); err != nil {
+			return directoryResponse{}, http.StatusGatewayTimeout, "timeout"
+		}
+		name, link := it.Next()
+		if name == nil || link == nil {
+			return directoryResponse{}, http.StatusInternalServerError, "internal"
+		}
+		nameString := name.String()
+		if !utf8.ValidString(nameString) || len([]byte(nameString)) > 1024 {
+			return directoryResponse{}, http.StatusInternalServerError, "internal"
+		}
+		child, ok := link.Link().(cidlink.Link)
+		if !ok {
+			return directoryResponse{}, http.StatusInternalServerError, "internal"
+		}
+		entries = append(entries, directoryEntry{Name: nameString, CID: child.Cid.String()})
+		if len(entries) > 1000 {
+			return directoryResponse{}, http.StatusRequestEntityTooLarge, "directory_too_large"
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return directoryResponse{}, http.StatusGatewayTimeout, "timeout"
+	}
+	slices.SortFunc(entries, func(a, b directoryEntry) int { return strings.Compare(a.Name, b.Name) })
+	return directoryResponse{Version: 1, Path: rawPath, ResolvedCID: clink.Cid.String(), Entries: entries}, 0, ""
+}
+
+func directoryStatus(ctx context.Context, err error) int {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled) {
+		return http.StatusGatewayTimeout
+	}
+	var noLink *boxoresolver.ErrNoLink
+	if errors.As(err, &noLink) {
+		return http.StatusNotFound
+	}
+	return http.StatusInternalServerError
+}
+
+func directoryCode(err error, ctx context.Context) string {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled) {
+		return "timeout"
+	}
+	var noLink *boxoresolver.ErrNoLink
+	if errors.As(err, &noLink) {
+		return "not_found"
+	}
+	return "internal"
+}
+
+func webUIHandler() http.Handler {
+	ui, _ := fs.Sub(webuiFS, "webui/dist")
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		name := strings.TrimPrefix(r.URL.Path, "/")
+		if name != "" && name != "explore/" && !fs.ValidPath(name) {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if name == "" || name == "explore" || name == "explore/" || strings.HasPrefix(name, "explore/") {
+			name = "index.html"
+		}
+		if !fs.ValidPath(name) {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		file, err := ui.Open(name)
+		if err != nil {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		defer file.Close()
+		info, err := file.Stat()
+		if err != nil || !info.Mode().IsRegular() {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		content, err := io.ReadAll(file)
+		if err != nil {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		http.ServeContent(w, r, path.Base(name), info.ModTime(), bytes.NewReader(content))
+	})
+}
+
+func withUIHostGate(ui, native http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		uiPath := r.URL.Path == "/" || r.URL.Path == "/explore" || r.URL.Path == "/explore/" || strings.HasPrefix(r.URL.Path, "/explore/") || r.URL.Path == directoryAPIPath || r.URL.Path == "/index.html" || strings.HasPrefix(r.URL.Path, "/assets/")
+		if uiPath && r.Host != "127.0.0.1:8090" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if uiPath {
+			ui.ServeHTTP(w, r)
+			return
+		}
+		native.ServeHTTP(w, r)
+	})
+}
 
 func makeMetricsAndDebuggingHandler() *http.ServeMux {
 	mux := http.NewServeMux()
@@ -367,24 +658,25 @@ func setupGatewayHandler(cfg Config, nd *Node) (http.Handler, error) {
 	ipfsHandler := withHTTPMetrics(gwHandler, "ipfs", cfg.disableMetrics)
 	ipnsHandler := withHTTPMetrics(gwHandler, "ipns", cfg.disableMetrics)
 
-	topMux := http.NewServeMux()
-	topMux.Handle("/ipfs/", ipfsHandler)
-	topMux.Handle("/ipns/", ipnsHandler)
-	topMux.HandleFunc("/version", func(w http.ResponseWriter, r *http.Request) {
+	nativeMux := http.NewServeMux()
+	nativeMux.Handle("/ipfs/", ipfsHandler)
+	nativeMux.Handle("/ipns/", ipnsHandler)
+	nativeMux.HandleFunc("/version", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "Client: %s\n", name)
 		fmt.Fprintf(w, "Version: %s\n", version)
 	})
-	topMux.HandleFunc("/api/v0/", func(w http.ResponseWriter, r *http.Request) {
+	nativeMux.HandleFunc("/api/v0/", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotImplemented)
 		w.Write([]byte("The /api/v0 Kubo RPC is not part of IPFS Gateway Specs (https://specs.ipfs.tech/http-gateways/). Consider refactoring your app. If you still need this Kubo endpoint, please self-host a Kubo instance yourself: https://docs.ipfs.tech/install/command-line/ with proper auth https://github.com/ipfs/kubo/blob/master/docs/config.md#apiauthorizations"))
 	})
-	topMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Write(indexHTML)
-	})
+	uiMux := http.NewServeMux()
+	uiMux.Handle(directoryAPIPath, directoryHandler(cfg, nd))
+	uiMux.Handle("/", webUIHandler())
 
 	// Construct the HTTP handler for the gateway.
-	handler := withConnect(topMux)
-	handler = http.Handler(gateway.NewHostnameHandler(gwConf, backend, handler))
+	nativeHandler := withConnect(nativeMux)
+	nativeHandler = http.Handler(gateway.NewHostnameHandler(gwConf, backend, nativeHandler))
+	handler := withUIHostGate(uiMux, nativeHandler)
 
 	// Add custom headers and liberal CORS.
 	handler = gateway.NewHeaders(headers).ApplyCors().Wrap(handler)

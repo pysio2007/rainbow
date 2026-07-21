@@ -3,8 +3,9 @@
 ## Scope and commands
 
 - This is one Go module (`github.com/ipfs/rainbow`) requiring Go `1.25.7`. The root `main` package builds the production `rainbow` daemon; `main.go` owns CLI and runtime wiring.
-- Build from the repository root with `go build`; it creates the ignored `./rainbow` binary. `version.json` is embedded by `version.go`, so it must be present in builds.
+- Build from the repository root with `make build` (or `go build` for Go-only work); `make build` first builds the Bun 1.3.3 WebUI and embeds `webui/dist`, while Go build creates the ignored `./rainbow` binary. `version.json` is embedded by `version.go`, so it must be present in builds.
 - Run the repository test suite with `go test ./...`.
+- Run `make test` for the Go and WebUI test suites. `make dev` starts Vite; run Rainbow separately for gateway/API requests.
 - Run the end-to-end CLI test alone with `go test . -run '^TestEndToEndTrustlessGatewayDomains$'`. It runs `go install .`, starts the binary, and is skipped on Windows.
 - There is no repository-local lint, typecheck, or task-runner command. CI's Go test and check jobs delegate to `ipdxco/unified-github-workflows`; do not claim an unverified local command matches them.
 
@@ -14,6 +15,7 @@
 - Flags and `RAINBOW_*` settings are documented in `docs/environment-variables.md`; keep that reference aligned with configuration changes.
 - Gateway conformance is separate from `go test`: it needs Bash, curl, Kubo `v0.33.0-rc1`, gateway-conformance fixtures, and `GATEWAY_CONFORMANCE_TEST=true`; CI exercises three backend modes against Rainbow on port `8090`.
 - Docker builds use Go `1.26`, cross-compile with `CGO_ENABLED=0`, and run the final image as the non-root `ipfs` user. Preserve those constraints when changing the image.
+- Docker also builds the WebUI with the pinned Bun 1.3.3 image. `webui/dist` is committed and CI fails when a build changes it or creates untracked files there.
 
 ## PR and release checks
 

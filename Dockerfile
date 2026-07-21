@@ -1,3 +1,11 @@
+FROM --platform=${BUILDPLATFORM:-linux/amd64} oven/bun:1.3.3-slim@sha256:5d55d9702e1c634a931f048d0ec84d35583450d6059327cb88d82edd55068556 AS webui-builder
+
+WORKDIR /webui
+COPY webui/package.json webui/bun.lock ./
+RUN bun install --frozen-lockfile
+COPY webui/ ./
+RUN bun run build
+
 FROM --platform=${BUILDPLATFORM:-linux/amd64} golang:1.26-bookworm AS builder
 
 LABEL org.opencontainers.image.source=https://github.com/ipfs/rainbow
@@ -20,10 +28,10 @@ WORKDIR $SRC_PATH
 RUN go mod download
 
 COPY . $SRC_PATH
+COPY --from=webui-builder /webui/dist $SRC_PATH/webui/dist
 RUN git config --global --add safe.directory /go/src/github.com/ipfs/rainbow
 
-RUN --mount=target=. \
-    --mount=type=cache,target=/root/.cache/go-build \
+RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o $GOPATH/bin/rainbow
 
@@ -49,4 +57,3 @@ VOLUME $RAINBOW_GATEWAY_PATH
 WORKDIR $RAINBOW_GATEWAY_PATH
 USER ipfs
 ENTRYPOINT ["tini", "--", "/usr/local/bin/entrypoint.sh"]
-

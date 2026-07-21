@@ -59,9 +59,24 @@ jobs:
 
       - name: Smoke-test Docker image
         run: |
-          for i in {1..3}; do
-            timeout 15s docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:smoke-test --version && break || [ $i = 3 ] && exit 1
+          timeout 15s docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:smoke-test --version
+          container_id=$(docker run -d -p 8090:8090 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:smoke-test \
+            --gateway-listen-address=0.0.0.0:8090 \
+            --autoconf=false \
+            --dht-routing=off \
+            --bootstrap= \
+            --http-routers= \
+            --dnslink-resolvers=)
+          trap 'docker rm -f "$container_id"' EXIT
+          for i in {1..15}; do
+            if curl --fail --silent http://127.0.0.1:8090/ > /dev/null; then
+              exit 0
+            fi
+            sleep 1
           done
+          docker logs "$container_id"
+          exit 1
         timeout-minutes: 1
 
       - name: Build and push multi-platform Docker image

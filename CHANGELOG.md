@@ -15,6 +15,9 @@ The following emojis are used to highlight certain changes:
 
 ### Added
 
+- Add the Bun/Vite WebUI build, committed `webui/dist` assets, WebUI CI
+  reproducibility checks, and Docker runtime smoke coverage.
+
 ### Changed
 
 - upgrade to `boxo` [v0.41.0](https://github.com/ipfs/boxo/releases/tag/v0.41.0)
