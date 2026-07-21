@@ -208,6 +208,18 @@ Generate an identity seed and launch a gateway:
 			EnvVars: []string{"RAINBOW_INMEM_BLOCK_CACHE"},
 			Usage:   "Size of the in-memory block cache (currently only used for pebble and badger). 0 to disable (disables compression on disk too)",
 		},
+		&cli.Int64Flag{
+			Name:    "blockstore-max-size",
+			Value:   0,
+			EnvVars: []string{"RAINBOW_BLOCKSTORE_MAX_SIZE"},
+			Usage:   "Logical limit on locally cached IPFS block payload bytes for FlatFS, Pebble, and Badger; excludes physical datastore overhead. 0 disables the limit. Ignored in remote-only mode",
+			Action: func(ctx *cli.Context, size int64) error {
+				if size < 0 {
+					return errors.New("invalid value for --blockstore-max-size: must be non-negative")
+				}
+				return nil
+			},
+		},
 		&cli.Uint64Flag{
 			Name:    "libp2p-max-memory",
 			Value:   0,
@@ -715,6 +727,7 @@ share the same seed as long as the indexes are different.
 			MaxMemory:                        cctx.Uint64("libp2p-max-memory"),
 			MaxFD:                            cctx.Int("libp2p-max-fd"),
 			InMemBlockCache:                  cctx.Int64("inmem-block-cache"),
+			BlockstoreMaxSize:                cctx.Int64("blockstore-max-size"),
 			RoutingV1Endpoints:               cctx.StringSlice("http-routers"),
 			RoutingV1FilterProtocols:         routerFilterProtocols,
 			HTTPRoutersTimeout:               cctx.Duration("http-routers-timeout"),
@@ -858,6 +871,11 @@ share the same seed as long as the indexes are different.
 		if err != nil {
 			return err
 		}
+		defer func() {
+			if err := gnd.Close(); err != nil {
+				goLog.Errorf("error closing Rainbow resources: %v", err)
+			}
+		}()
 
 		gatewayListen := cctx.String("gateway-listen-address")
 		ctlListen := cctx.String("ctl-listen-address")

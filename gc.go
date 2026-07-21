@@ -31,6 +31,7 @@ deleteBlocks:
 			size, err := nd.blockstore.GetSize(ctx, k)
 			if err != nil {
 				goLog.Warnf("failed to get size for block we are about to delete: %s", err)
+				continue
 			}
 
 			if err := nd.blockstore.DeleteBlock(ctx, k); err != nil {

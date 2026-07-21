@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/cockroachdb/pebble/v2"
@@ -18,6 +19,7 @@ import (
 	nopfsipfs "github.com/ipfs-shipyard/nopfs/ipfs"
 	"github.com/ipfs/boxo/blockservice"
 	"github.com/ipfs/boxo/blockstore"
+	dshelp "github.com/ipfs/boxo/datastore/dshelp"
 	"github.com/ipfs/boxo/exchange/offline"
 	bsfetcher "github.com/ipfs/boxo/fetcher/impl/blockservice"
 	"github.com/ipfs/boxo/gateway"
@@ -27,6 +29,7 @@ import (
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-datastore"
+	"github.com/ipfs/go-datastore/query"
 	badger4 "github.com/ipfs/go-ds-badger4"
 	flatfs "github.com/ipfs/go-ds-flatfs"
 	pebbleds "github.com/ipfs/go-ds-pebble"
@@ -95,10 +98,112 @@ type Node struct {
 	denylistSubs []*nopfs.HTTPSubscriber
 
 	// Maybe not be set depending on the configuration:
-	host       host.Host
-	datastore  datastore.Batching
-	blockstore blockstore.Blockstore
-	resolver   resolver.Resolver
+	host             host.Host
+	dhtHost          host.Host
+	datastore        datastore.Batching
+	capacityMetadata datastore.Batching
+	blockstore       blockstore.Blockstore
+	resolver         resolver.Resolver
+	closeOnce        sync.Once
+	closeErr         error
+}
+
+type capacityLocalScanner struct {
+	blockstore.Blockstore
+	datastore datastore.Batching
+}
+
+func closeRoutingValueStore(value routing.ValueStore) error {
+	if value == nil {
+		return nil
+	}
+	if bundled, ok := value.(*bundledDHT); ok {
+		if err := bundled.fullRT.Close(); err != nil {
+			return err
+		}
+		return bundled.standard.Close()
+	}
+	if closer, ok := value.(interface{ Close() error }); ok {
+		return closer.Close()
+	}
+	return nil
+}
+
+func (s *capacityLocalScanner) AllKeysChanWithError(ctx context.Context) (<-chan cid.Cid, <-chan error, error) {
+	results, err := s.datastore.Query(ctx, query.Query{KeysOnly: true})
+	if err != nil {
+		return nil, nil, err
+	}
+	keys := make(chan cid.Cid)
+	errors := make(chan error, 1)
+	go func() {
+		defer results.Close()
+		defer close(keys)
+		defer close(errors)
+		for {
+			entry, ok := results.NextSync()
+			if !ok {
+				return
+			}
+			if entry.Error != nil {
+				errors <- entry.Error
+				return
+			}
+			mh, err := dshelp.DsKeyToMultihash(datastore.NewKey(entry.Key))
+			if err != nil {
+				continue
+			}
+			select {
+			case keys <- cid.NewCidV1(cid.Raw, mh):
+			case <-ctx.Done():
+				errors <- ctx.Err()
+				return
+			}
+		}
+	}()
+	return keys, errors, nil
+}
+
+func (n *Node) closeStorage() error {
+	var firstErr error
+	if n.capacityMetadata != nil {
+		if err := n.capacityMetadata.Close(); err != nil {
+			firstErr = err
+		}
+	}
+	if n.datastore != nil {
+		if err := n.datastore.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+func (n *Node) Close() error {
+	n.closeOnce.Do(func() {
+		if n.bsrv != nil {
+			if err := n.bsrv.Close(); err != nil {
+				n.closeErr = err
+			}
+		}
+		if err := closeRoutingValueStore(n.vs); err != nil && n.closeErr == nil {
+			n.closeErr = err
+		}
+		if n.dhtHost != nil && n.dhtHost != n.host {
+			if err := n.dhtHost.Close(); err != nil && n.closeErr == nil {
+				n.closeErr = err
+			}
+		}
+		if n.host != nil {
+			if err := n.host.Close(); err != nil && n.closeErr == nil {
+				n.closeErr = err
+			}
+		}
+		if err := n.closeStorage(); err != nil && n.closeErr == nil {
+			n.closeErr = err
+		}
+	})
+	return n.closeErr
 }
 
 type Config struct {
@@ -112,9 +217,10 @@ type Config struct {
 	ConnMgrHi    int
 	ConnMgrGrace time.Duration
 
-	InMemBlockCache int64
-	MaxMemory       uint64
-	MaxFD           int
+	InMemBlockCache   int64
+	BlockstoreMaxSize int64
+	MaxMemory         uint64
+	MaxFD             int
 
 	GatewayDomains           []string
 	SubdomainGatewayDomains  []string
@@ -228,6 +334,9 @@ func SetupNoLibp2p(ctx context.Context, cfg Config, dnsCache *cachedDNS) (*Node,
 
 	// Setup the remote blockstore if that's the mode we're using.
 	var bsrv blockservice.BlockService
+	if cfg.BlockstoreMaxSize > 0 {
+		goLog.Warnf("blockstore max size is ignored in remote-only blockstore mode")
+	}
 	if cfg.RemoteBackendMode == RemoteBackendBlock {
 		blkst, err := gateway.NewRemoteBlockstore(cfg.RemoteBackends, nil)
 		if err != nil {
@@ -260,6 +369,34 @@ func SetupWithLibp2p(ctx context.Context, cfg Config, key crypto.PrivKey, dnsCac
 	}
 
 	var err error
+	var h host.Host
+	var ds datastore.Batching
+	var capacityMetadata datastore.Batching
+	var bsrv blockservice.BlockService
+	var dhtHost host.Host
+	var vs routing.ValueStore
+	setupComplete := false
+	defer func() {
+		if setupComplete {
+			return
+		}
+		if bsrv != nil {
+			_ = bsrv.Close()
+		}
+		_ = closeRoutingValueStore(vs)
+		if dhtHost != nil && dhtHost != h {
+			_ = dhtHost.Close()
+		}
+		if h != nil {
+			_ = h.Close()
+		}
+		if capacityMetadata != nil {
+			_ = capacityMetadata.Close()
+		}
+		if ds != nil {
+			_ = ds.Close()
+		}
+	}()
 
 	cfg.DataDir, err = filepath.Abs(cfg.DataDir)
 	if err != nil {
@@ -322,23 +459,22 @@ func SetupWithLibp2p(ctx context.Context, cfg Config, key crypto.PrivKey, dnsCac
 		}))
 	}
 
-	ds, err := setupDatastore(cfg)
+	ds, err = setupDatastore(cfg)
 	if err != nil {
+		ds = nil
 		return nil, err
 	}
 
 	var (
-		vs      routing.ValueStore
-		cr      routing.ContentRouting
-		pr      routing.PeerRouting
-		dhtHost host.Host
+		cr routing.ContentRouting
+		pr routing.PeerRouting
 	)
 
 	opts = append(opts, libp2p.Routing(func(h host.Host) (routing.PeerRouting, error) {
 		cr, pr, vs, dhtHost, err = setupRouting(ctx, cfg, h, ds, dhtRcMgr, bwc, dnsCache)
 		return pr, err
 	}))
-	h, err := libp2p.New(opts...)
+	h, err = libp2p.New(opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -348,7 +484,6 @@ func SetupWithLibp2p(ctx context.Context, cfg Config, key crypto.PrivKey, dnsCac
 		return nil, err
 	}
 
-	var bsrv blockservice.BlockService
 	if cfg.Bitswap {
 		blkst := blockstore.NewBlockstore(ds,
 			blockstore.NoPrefix(),
@@ -358,6 +493,17 @@ func SetupWithLibp2p(ctx context.Context, cfg Config, key crypto.PrivKey, dnsCac
 			// See also comment in blockservice.
 			blockstore.WriteThrough(true),
 		)
+		if cfg.BlockstoreMaxSize > 0 {
+			capacityMetadata, err = setupCapacityMetadataDatastore(cfg)
+			if err != nil {
+				capacityMetadata = nil
+				return nil, err
+			}
+			blkst, err = NewCapacityBlockstore(ctx, &capacityLocalScanner{Blockstore: blkst, datastore: ds}, capacityMetadata, cfg.BlockstoreMaxSize)
+			if err != nil {
+				return nil, err
+			}
+		}
 		blkst = &switchingBlockstore{
 			baseBlockstore:      blkst,
 			contextSwitchingKey: NoBlockcache{},
@@ -381,6 +527,9 @@ func SetupWithLibp2p(ctx context.Context, cfg Config, key crypto.PrivKey, dnsCac
 			blockservice.WriteThrough(true),
 		)
 	} else {
+		if cfg.BlockstoreMaxSize > 0 {
+			goLog.Warnf("blockstore max size is ignored in remote-only blockstore mode")
+		}
 		if len(cfg.RemoteBackends) == 0 || cfg.RemoteBackendMode != RemoteBackendBlock {
 			return nil, errors.New("remote backends in block mode must be set when disabling bitswap")
 		}
@@ -402,7 +551,9 @@ func SetupWithLibp2p(ctx context.Context, cfg Config, key crypto.PrivKey, dnsCac
 	r := setupResolver(bsrv, blocker)
 
 	n.host = h
+	n.dhtHost = dhtHost
 	n.datastore = ds
+	n.capacityMetadata = capacityMetadata
 	n.bsrv = bsrv
 	n.resolver = r
 
@@ -413,6 +564,7 @@ func SetupWithLibp2p(ctx context.Context, cfg Config, key crypto.PrivKey, dnsCac
 
 	n.vs = vs
 	n.ns = ns
+	setupComplete = true
 
 	return n, nil
 }
@@ -487,6 +639,14 @@ func setupDatastore(cfg Config) (datastore.Batching, error) {
 	default:
 		return nil, fmt.Errorf("unsupported blockstore type: %s", cfg.BlockstoreType)
 	}
+}
+
+func setupCapacityMetadataDatastore(cfg Config) (datastore.Batching, error) {
+	metadataDir := filepath.Join(cfg.DataDir, "capacity-metadata")
+	if err := os.MkdirAll(metadataDir, 0755); err != nil {
+		return nil, err
+	}
+	return flatfs.CreateOrOpen(filepath.Join(metadataDir, "flatfs"), flatfs.NextToLast(3), false)
 }
 
 func loadOrInitPeerKey(kf string) (crypto.PrivKey, error) {

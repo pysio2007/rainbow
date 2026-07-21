@@ -1,3 +1,13 @@
+## Local blockstore capacity limit
+
+`--blockstore-max-size` / `RAINBOW_BLOCKSTORE_MAX_SIZE` sets a logical limit,
+in raw bytes, on locally cached IPFS block payloads. It works with FlatFS,
+Pebble, and Badger, and excludes physical datastore overhead such as files,
+indexes, and database metadata. The default is `0`, which disables the limit.
+Remote-only mode ignores this setting. The limit is strict: a single block or
+the aggregate new payload bytes in a batch that exceeds it returns an error,
+so a network retrieval can fail rather than bypassing the quota.
+
 # Rainbow Blockstores
 
 `rainbow` ships with a number of possible backing block storage options for the purposes of caching data locally.

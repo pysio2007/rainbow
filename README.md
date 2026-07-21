@@ -167,6 +167,14 @@ term guarantees of support for any particular backing data storage.
 
 See [Blockstores](./docs/blockstores.md) for more details.
 
+The logical capacity of locally cached IPFS block payloads can be limited with
+`--blockstore-max-size` or `RAINBOW_BLOCKSTORE_MAX_SIZE` (raw bytes). The
+default `0` disables the limit; physical datastore overhead is excluded. This
+setting applies to local FlatFS, Pebble, and Badger blockstores and is ignored
+in remote-only mode. A positive limit is strict: a block or batch whose new
+payload bytes exceed the limit returns an error, so a network retrieval can
+fail rather than bypassing the quota.
+
 ## Garbage Collection
 
 Over time, the datastore can fill up with previously fetched blocks. To free up this used disk space, garbage collection can be run. 

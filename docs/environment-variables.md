@@ -7,6 +7,7 @@
   - [`RAINBOW_SUBDOMAIN_GATEWAY_DOMAINS`](#rainbow_subdomain_gateway_domains)
   - [`RAINBOW_TRUSTLESS_GATEWAY_DOMAINS`](#rainbow_trustless_gateway_domains)
   - [`RAINBOW_DATADIR`](#rainbow_datadir)
+  - [`RAINBOW_BLOCKSTORE_MAX_SIZE`](#rainbow_blockstore_max_size)
   - [`RAINBOW_GC_INTERVAL`](#rainbow_gc_interval)
   - [`RAINBOW_GC_THRESHOLD`](#rainbow_gc_threshold)
   - [`RAINBOW_IPNS_MAX_CACHE_TTL`](#rainbow_ipns_max_cache_ttl)
@@ -160,6 +161,17 @@ Default: none (`Host` is ignored and gateway at `127.0.0.1` supports both deseri
 Directory for persistent data (keys, blocks, denylists)
 
 Default: not set (uses the current directory)
+
+### `RAINBOW_BLOCKSTORE_MAX_SIZE`
+
+Logical limit, in raw bytes, on locally cached IPFS block payloads. This works
+with the local FlatFS, Pebble, and Badger blockstores and excludes physical
+datastore overhead. Set to `0` to disable the limit. A positive limit is strict:
+a block or batch whose new payload bytes exceed it returns an error, so network
+retrieval can fail rather than bypassing the quota. Remote-only mode ignores
+this setting.
+
+Default: `0` (unlimited)
 
 ### `RAINBOW_GC_INTERVAL`
 
@@ -627,4 +639,3 @@ Optional, set to 0 by default.
 
 The fraction (between 0 and 1) of requests that should be sampled.
 This is calculated independently of any Traceparent based sampling.
-

@@ -17,9 +17,12 @@ The following emojis are used to highlight certain changes:
 
 - Add the Bun/Vite WebUI build, committed `webui/dist` assets, WebUI CI
   reproducibility checks, and Docker runtime smoke coverage.
+- Add configuration for a logical local blockstore payload capacity limit.
 
 ### Changed
 
+- Enforce the local blockstore payload limit strictly; oversized blocks or
+  batches now return an error instead of bypassing the configured quota.
 - upgrade to `boxo` [v0.41.0](https://github.com/ipfs/boxo/releases/tag/v0.41.0)
 - update `go-ds-pebble` to [v0.5.12](https://github.com/ipfs/go-ds-pebble/releases/tag/v0.5.12)
 - upgrade to `go-libp2p-kad-dht` [v0.41.0](https://github.com/libp2p/go-libp2p-kad-dht/releases/tag/v0.41.0)

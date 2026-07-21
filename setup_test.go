@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -120,6 +122,70 @@ func TestPeering(t *testing.T) {
 	}, false)
 }
 
+func TestLocalBlockstoreCapacityConfiguredThroughSetup(t *testing.T) {
+	node := mustTestNode(t, Config{Bitswap: true, BlockstoreMaxSize: 4})
+	require.NotNil(t, node.capacityMetadata)
+	require.NotEqual(t, node.datastore, node.capacityMetadata)
+	_, err := os.Stat(filepath.Join(node.dataDir, "capacity-metadata", "flatfs"))
+	require.NoError(t, err)
+	ctx := t.Context()
+	blocksToPut := []blocks.Block{
+		blocks.NewBlock([]byte("aa")),
+		blocks.NewBlock([]byte("bb")),
+		blocks.NewBlock([]byte("cc")),
+	}
+	for _, block := range blocksToPut {
+		require.NoError(t, node.blockstore.Put(ctx, block))
+	}
+
+	has, err := node.blockstore.Has(ctx, blocksToPut[0].Cid())
+	require.NoError(t, err)
+	require.False(t, has)
+	has, err = node.blockstore.Has(ctx, blocksToPut[2].Cid())
+	require.NoError(t, err)
+	require.True(t, has)
+	keys, err := node.blockstore.AllKeysChan(ctx)
+	require.NoError(t, err)
+	var keyCount int
+	for range keys {
+		keyCount++
+	}
+	require.Equal(t, 2, keyCount)
+}
+
+func TestLocalBlockstoreZeroCapacityIsUnlimitedThroughSetup(t *testing.T) {
+	node := mustTestNode(t, Config{Bitswap: true})
+	ctx := t.Context()
+	for _, data := range []string{"aa", "bb", "cc"} {
+		block := blocks.NewBlock([]byte(data))
+		require.NoError(t, node.blockstore.Put(ctx, block))
+		has, err := node.blockstore.Has(ctx, block.Cid())
+		require.NoError(t, err)
+		require.True(t, has)
+	}
+}
+
+func TestLocalBlockstoreCapacityAcrossConfiguredDatastores(t *testing.T) {
+	for _, blockstoreType := range []string{"flatfs", "pebble", "badger"} {
+		t.Run(blockstoreType, func(t *testing.T) {
+			node := mustTestNode(t, Config{BlockstoreType: blockstoreType, Bitswap: true, BlockstoreMaxSize: 2})
+			first := blocks.NewBlock([]byte("aa"))
+			second := blocks.NewBlock([]byte("bb"))
+			require.NoError(t, node.blockstore.Put(t.Context(), first))
+			require.NoError(t, node.blockstore.Put(t.Context(), second))
+			has, err := node.blockstore.Has(t.Context(), first.Cid())
+			require.NoError(t, err)
+			require.False(t, has)
+		})
+	}
+}
+
+func TestNodeCloseIsIdempotent(t *testing.T) {
+	node := mustTestNode(t, Config{Bitswap: true, BlockstoreMaxSize: 4})
+	require.NoError(t, node.Close())
+	require.NoError(t, node.Close())
+}
+
 func TestPeeringSharedCache(t *testing.T) {
 	nodes := mustPeeredNodes(t, [][]int{
 		{1}, // 0 peered to 1
@@ -206,6 +272,20 @@ func testSeedPeering(t *testing.T, n int, dhtRouting DHTRouting, dhtSharedHost b
 
 		nodes[i], err = SetupWithLibp2p(ctx, cfgs[i], keys[i], cdns)
 		require.NoError(t, err)
+		if dhtRouting != DHTOff {
+			require.NotNil(t, nodes[i].dhtHost)
+			// nodes[i].host may be wrapped in a routed-host by libp2p.New
+			// (since we pass libp2p.Routing), so comparing the hosts
+			// themselves for identity is unreliable. Comparing the
+			// underlying Network() is: RoutedHost.Network() forwards to
+			// the wrapped host's Network(), so this reflects whether the
+			// DHT host and the main host share the same underlying host.
+			if dhtSharedHost {
+				require.Same(t, nodes[i].host.Network(), nodes[i].dhtHost.Network())
+			} else {
+				require.NotSame(t, nodes[i].host.Network(), nodes[i].dhtHost.Network())
+			}
+		}
 		registerTestNodeCleanup(t, nodes[i])
 	}
 
