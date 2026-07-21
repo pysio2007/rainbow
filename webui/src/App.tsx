@@ -5,6 +5,8 @@ import type { FilePreviewType } from '@/lib/file-preview'
 import { resolveFilePreviewType } from '@/lib/file-preview'
 import { directoryApiPath, explorerPathToIpfsPath, gatewayPath, ipfsPathToExplorerPath, normalizeInput } from '@/lib/normalizer'
 import { parseVersionText } from '@/lib/version'
+import type { GatewayStats } from '@/lib/stats'
+import { fetchStats, formatBytes, formatCount } from '@/lib/stats'
 
 type Directory = { version: number; path: string; resolvedCid: string; entries: { name: string; cid: string }[] }
 const sampleCid = 'QmYwAPJzv5CZsnAzt8auVZRnZQ5J7cV7Wc6YzS4hGJ5a6H'
@@ -41,8 +43,10 @@ function SearchBox({ initial = '' }: { initial?: string }) {
 
 function Home() {
   const [version, setVersion] = useState('')
+  const [stats, setStats] = useState<GatewayStats | null>(null)
   useEffect(() => {
     fetch('/version').then(async (response) => response.ok ? parseVersionText(response.headers.get('content-type'), await response.text()) : '').then(setVersion).catch(() => undefined)
+    fetchStats().then(setStats).catch(() => undefined)
   }, [])
   return <><Header /><main className="home">
     <section className="hero">
@@ -52,6 +56,7 @@ function Home() {
       <SearchBox />
       <div className="hero-hint"><span>Direct access</span><code>suse.cc/ipfs/&lt;CID&gt;</code><span>or try</span><button onClick={() => window.location.assign(`/ipfs/${sampleCid}`)}>{sampleCid.slice(0, 12)}…</button></div>
       <div className="hero-proof"><strong>Fast</strong><span>to open</span><strong>Free</strong><span>to use</span></div>
+      {stats && <div className="hero-proof hero-stats"><strong>{formatCount(stats.filesProcessed)}</strong><span>files served</span><strong>{formatBytes(stats.originBytes)}</strong><span>origin traffic</span></div>}
     </section>
     <section className="home-bottom"><div><span className="eyebrow">A public route to IPFS</span><h2>Fast to open.<br />Free to use.</h2></div><div className="principles"><div><strong>01</strong><span>Open by CID or path</span></div><div><strong>02</strong><span>Browse immutable directories</span></div><div><strong>03</strong><span>Direct URL access</span></div></div></section>
   </main><footer className="site-footer"><span>suse.cc / public IPFS gateway</span>{version && <span>{version.trim()}</span>}</footer></>

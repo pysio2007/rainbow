@@ -104,6 +104,7 @@ type Node struct {
 	capacityMetadata datastore.Batching
 	blockstore       blockstore.Blockstore
 	resolver         resolver.Resolver
+	stats            *Stats
 	closeOnce        sync.Once
 	closeErr         error
 }
@@ -166,6 +167,11 @@ func (s *capacityLocalScanner) AllKeysChanWithError(ctx context.Context) (<-chan
 
 func (n *Node) closeStorage() error {
 	var firstErr error
+	if n.stats != nil {
+		if err := n.stats.Close(); err != nil {
+			firstErr = err
+		}
+	}
 	if n.capacityMetadata != nil {
 		if err := n.capacityMetadata.Close(); err != nil {
 			firstErr = err
@@ -353,6 +359,12 @@ func SetupNoLibp2p(ctx context.Context, cfg Config, dnsCache *cachedDNS) (*Node,
 		return nil, err
 	}
 
+	stats, err := NewStats(cfg.DataDir)
+	if err != nil {
+		return nil, err
+	}
+	go stats.Run(ctx)
+
 	return &Node{
 		vs:           vs,
 		ns:           ns,
@@ -360,6 +372,7 @@ func SetupNoLibp2p(ctx context.Context, cfg Config, dnsCache *cachedDNS) (*Node,
 		denylistSubs: denylists,
 		bsrv:         bsrv,
 		resolver:     resolver,
+		stats:        stats,
 	}, nil
 }
 
@@ -408,9 +421,21 @@ func SetupWithLibp2p(ctx context.Context, cfg Config, key crypto.PrivKey, dnsCac
 		return nil, err
 	}
 
+	stats, err := NewStats(cfg.DataDir)
+	if err != nil {
+		return nil, err
+	}
+	go stats.Run(ctx)
+	defer func() {
+		if !setupComplete {
+			_ = stats.Close()
+		}
+	}()
+
 	n := &Node{
 		dataDir:      cfg.DataDir,
 		denylistSubs: denylists,
+		stats:        stats,
 	}
 
 	bwc := metrics.NewBandwidthCounter()
@@ -504,6 +529,7 @@ func SetupWithLibp2p(ctx context.Context, cfg Config, key crypto.PrivKey, dnsCac
 				return nil, err
 			}
 		}
+		blkst = &statsBlockstore{Blockstore: blkst, stats: stats}
 		blkst = &switchingBlockstore{
 			baseBlockstore:      blkst,
 			contextSwitchingKey: NoBlockcache{},

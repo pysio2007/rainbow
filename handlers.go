@@ -47,6 +47,8 @@ var webuiFS embed.FS
 
 const directoryAPIPath = "/_rainbow/api/v1/directory"
 
+const statsAPIPath = "/_rainbow/api/v1/stats"
+
 var directorySemaphore = make(chan struct{}, 32)
 
 const maxDirectoryJSONSize = 2 << 20
@@ -268,6 +270,50 @@ func directoryCode(err error, ctx context.Context) string {
 	return "internal"
 }
 
+type statsResponse struct {
+	Version        int   `json:"version"`
+	FilesProcessed int64 `json:"filesProcessed"`
+	OriginBytes    int64 `json:"originBytes"`
+}
+
+// statsHandler serves cumulative gateway usage counters as JSON for the web UI.
+func statsHandler(stats *Stats) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		files, bytes := stats.Snapshot()
+		data, err := json.Marshal(statsResponse{Version: 1, FilesProcessed: files, OriginBytes: bytes})
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Cache-Control", "public, max-age=5")
+		w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+		w.WriteHeader(http.StatusOK)
+		if r.Method != http.MethodHead {
+			_, _ = w.Write(data)
+		}
+	})
+}
+
+// withStatsCounter records one processed file per successfully served gateway
+// request (HTTP status < 400).
+func withStatsCounter(next http.Handler, stats *Stats) http.Handler {
+	if stats == nil {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		m := httpsnoop.CaptureMetrics(next, w, r)
+		if m.Code < http.StatusBadRequest {
+			stats.AddFile()
+		}
+	})
+}
+
 func webUIHandler() http.Handler {
 	ui, _ := fs.Sub(webuiFS, "webui/dist")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -309,7 +355,7 @@ func webUIHandler() http.Handler {
 
 func withUIHostGate(ui, native http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		uiPath := r.URL.Path == "/" || r.URL.Path == "/explore" || r.URL.Path == "/explore/" || strings.HasPrefix(r.URL.Path, "/explore/") || r.URL.Path == directoryAPIPath || r.URL.Path == "/index.html" || strings.HasPrefix(r.URL.Path, "/assets/")
+		uiPath := r.URL.Path == "/" || r.URL.Path == "/explore" || r.URL.Path == "/explore/" || strings.HasPrefix(r.URL.Path, "/explore/") || r.URL.Path == directoryAPIPath || r.URL.Path == statsAPIPath || r.URL.Path == "/index.html" || strings.HasPrefix(r.URL.Path, "/assets/")
 		if uiPath && r.Host != "127.0.0.1:8090" {
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -655,8 +701,8 @@ func setupGatewayHandler(cfg Config, nd *Node) (http.Handler, error) {
 	}
 	gwHandler := gateway.NewHandler(gwConf, backend)
 
-	ipfsHandler := withHTTPMetrics(gwHandler, "ipfs", cfg.disableMetrics)
-	ipnsHandler := withHTTPMetrics(gwHandler, "ipns", cfg.disableMetrics)
+	ipfsHandler := withStatsCounter(withHTTPMetrics(gwHandler, "ipfs", cfg.disableMetrics), nd.stats)
+	ipnsHandler := withStatsCounter(withHTTPMetrics(gwHandler, "ipns", cfg.disableMetrics), nd.stats)
 
 	nativeMux := http.NewServeMux()
 	nativeMux.Handle("/ipfs/", ipfsHandler)
@@ -671,6 +717,7 @@ func setupGatewayHandler(cfg Config, nd *Node) (http.Handler, error) {
 	})
 	uiMux := http.NewServeMux()
 	uiMux.Handle(directoryAPIPath, directoryHandler(cfg, nd))
+	uiMux.Handle(statsAPIPath, statsHandler(nd.stats))
 	uiMux.Handle("/", webUIHandler())
 
 	// Construct the HTTP handler for the gateway.
