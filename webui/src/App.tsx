@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import type { ReactNode } from 'react'
+import { Fragment, useEffect, useState } from 'react'
+import type { FormEvent, ReactNode } from 'react'
 import { ArrowUpRight, ChevronRight, CircleAlert, Compass, ExternalLink, FileAudio, FileCode, FileImage, FileText, FileVideo, Folder, Search, Sparkles } from 'lucide-react'
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
@@ -12,12 +12,47 @@ import { parseVersionText } from '@/lib/version'
 import { formatBytes, formatCount } from '@/lib/format'
 import type { GatewayStats } from '@/lib/stats'
 import { fetchStats } from '@/lib/stats'
+import { ModeToggle } from '@/components/mode-toggle'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
+import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '@/components/ui/breadcrumb'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { Skeleton } from '@/components/ui/skeleton'
 
 type Directory = { version: number; path: string; resolvedCid: string; entries: { name: string; cid: string }[] }
 const sampleCid = 'QmYwAPJzv5CZsnAzt8auVZRnZQ5J7cV7Wc6YzS4hGJ5a6H'
 
 function Header() {
-  return <header className="site-header"><Link to="/" className="wordmark">suse.cc</Link><nav><Link to="/explore">Explorer <Compass size={15} /></Link><a href="/version">Status <ArrowUpRight size={14} /></a></nav></header>
+  return (
+    <header className="border-b">
+      <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
+        <Link to="/" className="text-lg font-semibold tracking-tight">suse.cc</Link>
+        <nav className="flex items-center gap-1">
+          <Button asChild variant="ghost" size="sm">
+            <Link to="/explore"><Compass className="size-4" />Explorer</Link>
+          </Button>
+          <Button asChild variant="ghost" size="sm">
+            <a href="/version">Status<ArrowUpRight className="size-4" /></a>
+          </Button>
+          <ModeToggle />
+        </nav>
+      </div>
+    </header>
+  )
+}
+
+function SiteFooter({ version }: { version: string }) {
+  return (
+    <footer className="border-t">
+      <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-2 px-6 py-6 text-sm text-muted-foreground">
+        <span>suse.cc · public IPFS gateway</span>
+        {version && <span className="font-mono text-xs">{version.trim()}</span>}
+      </div>
+    </footer>
+  )
 }
 
 function SearchBox({ initial = '' }: { initial?: string }) {
@@ -27,7 +62,7 @@ function SearchBox({ initial = '' }: { initial?: string }) {
   let target = null
   try { target = value.trim() ? normalizeInput(value) : null } catch { target = null }
 
-  function submit(event: React.FormEvent) {
+  function submit(event: FormEvent) {
     event.preventDefault()
     try {
       const result = normalizeInput(value)
@@ -36,15 +71,39 @@ function SearchBox({ initial = '' }: { initial?: string }) {
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Invalid input') }
   }
 
-  return <form className="search-wrap" onSubmit={submit}>
-    <Search size={20} aria-hidden="true" />
-    <input value={value} onChange={(event) => { setValue(event.target.value); setError('') }} placeholder="Paste a CID, IPFS path, or gateway URL" aria-label="Content address" autoComplete="off" />
-    {value && <button type="button" className="clear-button" onClick={() => setValue('')} aria-label="Clear input">×</button>}
-    <button className="go-button" type="submit">Open <ArrowUpRight size={16} /></button>
-    {target?.canExplore && <button type="button" className="explore-button" onClick={() => navigate(ipfsPathToExplorerPath(target.path))}>Explore <Compass size={15} /></button>}
-    {error && <p className="field-error" role="alert"><CircleAlert size={15} />{error}</p>}
-  </form>
+  return (
+    <form onSubmit={submit} className="w-full max-w-2xl space-y-3">
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <div className="relative flex-1">
+          <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+          <Input
+            value={value}
+            onChange={(event) => { setValue(event.target.value); setError('') }}
+            placeholder="Paste a CID, IPFS path, or gateway URL"
+            aria-label="Content address"
+            autoComplete="off"
+            className="pl-9"
+          />
+        </div>
+        <div className="flex gap-2">
+          <Button type="submit">Open <ArrowUpRight className="size-4" /></Button>
+          {target?.canExplore && (
+            <Button type="button" variant="secondary" onClick={() => navigate(ipfsPathToExplorerPath(target.path))}>
+              Explore <Compass className="size-4" />
+            </Button>
+          )}
+        </div>
+      </div>
+      {error && <p role="alert" className="flex items-center gap-1.5 text-sm text-destructive"><CircleAlert className="size-4" />{error}</p>}
+    </form>
+  )
 }
+
+const features = [
+  { n: '01', t: 'Open by CID or path' },
+  { n: '02', t: 'Browse immutable directories' },
+  { n: '03', t: 'Direct URL access' },
+]
 
 function Home() {
   const [version, setVersion] = useState('')
@@ -53,21 +112,55 @@ function Home() {
     fetch('/version').then(async (response) => response.ok ? parseVersionText(response.headers.get('content-type'), await response.text()) : '').then(setVersion).catch(() => undefined)
     fetchStats().then(setStats).catch(() => undefined)
   }, [])
-  return <><Header /><main className="home">
-    <section className="hero">
-      <div className="hero-kicker"><Sparkles size={15} /> public IPFS gateway</div>
-      <h1>suse.cc<br /><em>for IPFS content.</em></h1>
-      <p className="hero-copy">Access IPFS content by pasting a CID, an IPFS path, or a gateway URL. The gateway takes you straight to the content you name.</p>
-      <SearchBox />
-      <div className="hero-hint"><span>Direct access</span><code>suse.cc/ipfs/&lt;CID&gt;</code><span>or try</span><button onClick={() => window.location.assign(`/ipfs/${sampleCid}`)}>{sampleCid.slice(0, 12)}…</button></div>
-      <div className="hero-proof"><strong>Fast</strong><span>to open</span><strong>Free</strong><span>to use</span></div>
-      {stats && <div className="hero-proof hero-stats"><strong>{formatCount(stats.filesProcessed)}</strong><span>files served</span><strong>{formatBytes(stats.originBytes)}</strong><span>origin traffic</span></div>}
-    </section>
-    <section className="home-bottom"><div><span className="eyebrow">A public route to IPFS</span><h2>Fast to open.<br />Free to use.</h2></div><div className="principles"><div><strong>01</strong><span>Open by CID or path</span></div><div><strong>02</strong><span>Browse immutable directories</span></div><div><strong>03</strong><span>Direct URL access</span></div></div></section>
-  </main><footer className="site-footer"><span>suse.cc / public IPFS gateway</span>{version && <span>{version.trim()}</span>}</footer></>
+
+  return (
+    <div className="flex min-h-svh flex-col">
+      <Header />
+      <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-16">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground"><Sparkles className="size-4" /> Public IPFS gateway</div>
+        <h1 className="mt-4 max-w-2xl text-4xl font-semibold tracking-tight sm:text-5xl">Access IPFS content, instantly.</h1>
+        <p className="mt-4 max-w-xl text-muted-foreground">Paste a CID, an IPFS path, or a gateway URL. The gateway takes you straight to the content you name.</p>
+        <div className="mt-8"><SearchBox /></div>
+        <div className="mt-4 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+          <span>Try</span>
+          <Button variant="link" className="h-auto p-0 font-mono" onClick={() => window.location.assign(`/ipfs/${sampleCid}`)}>{sampleCid.slice(0, 12)}…</Button>
+        </div>
+
+        {stats && (
+          <div className="mt-10 grid max-w-md gap-4 sm:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardDescription>Files served</CardDescription>
+                <CardTitle className="text-3xl tabular-nums">{formatCount(stats.filesProcessed)}</CardTitle>
+              </CardHeader>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardDescription>Origin traffic</CardDescription>
+                <CardTitle className="text-3xl tabular-nums">{formatBytes(stats.originBytes)}</CardTitle>
+              </CardHeader>
+            </Card>
+          </div>
+        )}
+
+        <div className="mt-16 grid gap-4 sm:grid-cols-3">
+          {features.map((feature) => (
+            <Card key={feature.n}>
+              <CardHeader>
+                <CardDescription className="font-mono">{feature.n}</CardDescription>
+                <CardTitle className="text-base font-medium">{feature.t}</CardTitle>
+              </CardHeader>
+            </Card>
+          ))}
+        </div>
+      </main>
+      <SiteFooter version={version} />
+    </div>
+  )
 }
 
 const previewTextLimit = 1 << 20 // 1 MiB
+const typeNames: Record<FilePreviewType, string> = { image: 'Image', audio: 'Audio', video: 'Video', pdf: 'PDF', markdown: 'Markdown', text: 'Text', unknown: '' }
 
 type FileMeta = { size: number | null; contentType: string | null }
 
@@ -114,6 +207,17 @@ function useTextContent(url: string, enabled: boolean, size: number | null): { b
   return { body, state }
 }
 
+function PreviewNotice({ title, description, action }: { title: string; description: string; action: ReactNode }) {
+  return (
+    <Alert>
+      <FileText className="size-4" />
+      <AlertTitle>{title}</AlertTitle>
+      <AlertDescription>{description}</AlertDescription>
+      <div className="mt-3">{action}</div>
+    </Alert>
+  )
+}
+
 function FilePreview({ path, type }: { path: string; type: FilePreviewType }) {
   const url = gatewayPath(path)
   const name = decodeURIComponent(path.split('/').pop() || 'IPFS file')
@@ -123,41 +227,70 @@ function FilePreview({ path, type }: { path: string; type: FilePreviewType }) {
   const isTextual = effectiveType === 'markdown' || effectiveType === 'text'
   const { body, state } = useTextContent(url, isTextual && settled, meta?.size ?? null)
 
-  const icon = effectiveType === 'image' ? <FileImage size={18} />
-    : effectiveType === 'audio' ? <FileAudio size={18} />
-    : effectiveType === 'video' ? <FileVideo size={18} />
-    : effectiveType === 'text' ? <FileCode size={18} />
-    : <FileText size={18} />
-  const label = effectiveType === 'unknown' ? 'Preview unavailable' : `${effectiveType.toUpperCase()} preview`
+  const icon = effectiveType === 'image' ? <FileImage className="size-4" />
+    : effectiveType === 'audio' ? <FileAudio className="size-4" />
+    : effectiveType === 'video' ? <FileVideo className="size-4" />
+    : effectiveType === 'text' ? <FileCode className="size-4" />
+    : <FileText className="size-4" />
+  const label = effectiveType === 'unknown' ? 'Preview unavailable' : `${typeNames[effectiveType]} preview`
 
-  const nativeLink = <a className="preview-open" href={url}>Open native gateway <ArrowUpRight size={14} /></a>
-  const tooLarge = <div className="preview-unavailable"><FileText size={28} /><h2>This file is too large to preview</h2><p>Open the native gateway to view or download it.</p>{nativeLink}</div>
-  const unavailable = <div className="preview-unavailable"><FileText size={28} /><h2 id="file-preview-title">This file cannot be previewed here</h2><p>Open the native gateway to view or download this content.</p>{nativeLink}</div>
-  const loading = <div className="status"><div className="spinner" />Loading file</div>
+  const nativeButton = (
+    <Button asChild variant="outline" size="sm">
+      <a href={url}>Open native gateway <ArrowUpRight className="size-4" /></a>
+    </Button>
+  )
 
-  let content: ReactNode = null
-  if (effectiveType === 'image') content = <img className="preview-image" src={url} alt={name} />
-  else if (effectiveType === 'audio') content = <audio className="preview-audio" controls preload="metadata" src={url} aria-label={`Play ${name}`}>Your browser cannot play this audio file.</audio>
-  else if (effectiveType === 'video') content = <video className="preview-video" controls preload="metadata" src={url} aria-label={`Play ${name}`}>Your browser cannot play this video file.</video>
-  else if (effectiveType === 'pdf') content = <iframe className="preview-pdf" src={url} title={`Preview of ${name}`} />
-  else if (isTextual) {
-    if (!settled || state === 'loading') content = loading
-    else if (state === 'too-large') content = tooLarge
-    else if (state === 'error') content = unavailable
-    else if (effectiveType === 'markdown') content = <div className="preview-markdown"><ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={(value) => resolveMarkdownUrl(path, value)}>{body}</ReactMarkdown></div>
-    else content = <pre className="preview-text">{body}</pre>
-  } else content = settled ? unavailable : loading
+  function renderBody() {
+    if (effectiveType === 'image') return <img src={url} alt={name} className="mx-auto max-h-[460px] w-auto rounded-md" />
+    if (effectiveType === 'audio') return <audio controls preload="metadata" src={url} aria-label={`Play ${name}`} className="w-full">Your browser cannot play this audio file.</audio>
+    if (effectiveType === 'video') return <video controls preload="metadata" src={url} aria-label={`Play ${name}`} className="mx-auto max-h-[460px] w-full rounded-md">Your browser cannot play this video file.</video>
+    if (effectiveType === 'pdf') return <iframe src={url} title={`Preview of ${name}`} className="h-[520px] w-full rounded-md border" />
+    if (isTextual) {
+      if (!settled || state === 'loading') return <Skeleton className="h-64 w-full" />
+      if (state === 'too-large') return <PreviewNotice title="This file is too large to preview" description="Open the native gateway to view or download it." action={nativeButton} />
+      if (state === 'error') return <PreviewNotice title="This file could not be loaded" description="Open the native gateway to view or download it." action={nativeButton} />
+      if (effectiveType === 'markdown') {
+        return (
+          <ScrollArea className="max-h-[560px] w-full">
+            <article className="prose prose-sm dark:prose-invert max-w-none">
+              <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={(value) => resolveMarkdownUrl(path, value)}>{body}</ReactMarkdown>
+            </article>
+          </ScrollArea>
+        )
+      }
+      return (
+        <ScrollArea className="max-h-[560px] w-full rounded-md border bg-muted/40">
+          <pre className="p-4 font-mono text-xs leading-relaxed">{body}</pre>
+        </ScrollArea>
+      )
+    }
+    if (!settled) return <Skeleton className="h-40 w-full" />
+    return <PreviewNotice title="This file cannot be previewed here" description="Open the native gateway to view or download this content." action={nativeButton} />
+  }
 
-  const showFallback = content !== unavailable && content !== tooLarge && content !== loading
+  const mediaType = effectiveType === 'image' || effectiveType === 'audio' || effectiveType === 'video' || effectiveType === 'pdf'
+  const showFallback = mediaType || (isTextual && state === 'ready')
 
-  return <section className={`file-preview file-preview-${effectiveType}`} aria-label={`${label}: ${name}`}>
-    <div className="file-preview-heading">
-      <div className="file-preview-label">{icon}<span>{label}</span></div>
-      <div className="file-preview-meta">{meta?.size != null && <span className="file-size">{formatBytes(meta.size)}</span>}<code title={name}>{name}</code></div>
-    </div>
-    {content}
-    {showFallback && <p className="preview-fallback">Having trouble loading it? <a href={url}>Open native gateway <ArrowUpRight size={14} /></a></p>}
-  </section>
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <CardTitle className="flex items-center gap-2 text-base">{icon}{label}</CardTitle>
+          <div className="flex items-center gap-2">
+            {meta?.size != null && <Badge variant="secondary" className="tabular-nums">{formatBytes(meta.size)}</Badge>}
+            <code className="max-w-[240px] truncate rounded bg-muted px-2 py-1 font-mono text-xs" title={name}>{name}</code>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>{renderBody()}</CardContent>
+      {showFallback && (
+        <CardFooter className="justify-between gap-3 text-sm text-muted-foreground">
+          <span>Having trouble loading it?</span>
+          {nativeButton}
+        </CardFooter>
+      )}
+    </Card>
+  )
 }
 
 function Explorer() {
@@ -182,20 +315,124 @@ function Explorer() {
     try { apiPath = directoryApiPath(rawPath) } catch { setError('This is not a valid immutable path.'); setLoading(false); return }
     fetch(`/_rainbow/api/v1/directory?path=${encodeURIComponent(apiPath)}`, { headers: { Accept: 'application/json' } })
       .then(async (response) => { if (!response.ok) { const code = (await response.json().catch(() => null))?.error?.code || 'Directory unavailable'; throw new Error(code) }; return response.json() })
-      .then((data: Directory) => { if (active) setDirectory(data) }).catch((caught) => { if (!active) return; if (caught instanceof Error && caught.message === 'not_directory') setPreviewType(resolveFilePreviewType(rawPath)); else setError(caught instanceof Error ? caught.message : 'Directory unavailable') }).finally(() => { if (active) setLoading(false) })
+      .then((data: Directory) => { if (active) setDirectory(data) })
+      .catch((caught) => { if (!active) return; if (caught instanceof Error && caught.message === 'not_directory') setPreviewType(resolveFilePreviewType(rawPath)); else setError(caught instanceof Error ? caught.message : 'Directory unavailable') })
+      .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
   }, [rawPath])
 
-  if (!rawPath) return <><Header /><main className="explore-empty"><div className="empty-icon"><Compass size={27} /></div><h1>Explore an immutable directory</h1><p>Start with an IPFS CID. Directory entries are fetched from this gateway.</p><SearchBox /></main></>
+  if (!rawPath) {
+    return (
+      <div className="flex min-h-svh flex-col">
+        <Header />
+        <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-16">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground"><Compass className="size-4" /> Immutable explorer</div>
+          <h1 className="mt-4 text-3xl font-semibold tracking-tight">Explore an immutable directory</h1>
+          <p className="mt-3 max-w-xl text-muted-foreground">Start with an IPFS CID. Directory entries are fetched from this gateway.</p>
+          <div className="mt-8"><SearchBox /></div>
+        </main>
+      </div>
+    )
+  }
+
   const breadcrumb = rawPath.split('/').filter(Boolean).slice(1)
-  return <><Header /><main className="explorer"><div className="explorer-top"><div><span className="eyebrow">Immutable explorer</span><h1>Directory</h1></div><a className="native-link" href={gatewayPath(rawPath)}>Open native gateway <ExternalLink size={15} /></a></div>
-    <div className="breadcrumbs"><Link to="/explore">Explorer</Link>{breadcrumb.map((part, index) => <span key={`${part}-${index}`}><ChevronRight size={14} /><Link to={ipfsPathToExplorerPath(`/ipfs/${breadcrumb.slice(0, index + 1).join('/')}`)}>{index === 0 ? `${part.slice(0, 12)}…` : part}</Link></span>)}</div>
-    {loading && <div className="status"><div className="spinner" />Loading directory</div>}
-    {error && <div className="status error-status"><CircleAlert size={18} /><div><strong>Could not open this directory</strong><p>{error.replaceAll('_', ' ')}</p><a href={gatewayPath(rawPath)}>Open it in the native gateway <ArrowUpRight size={14} /></a></div></div>}
-    {previewType && <FilePreview path={rawPath} type={previewType} />}
-    {directory && <div className="directory-panel"><div className="directory-meta"><span>{directory.entries.length} {directory.entries.length === 1 ? 'entry' : 'entries'}</span><code>{directory.resolvedCid}</code></div>{directory.entries.length === 0 ? <div className="empty-list">This directory is empty.</div> : <div className="entry-list">{directory.entries.map((entry) => <Link className="entry" key={`${entry.name}-${entry.cid}`} to={ipfsPathToExplorerPath(`${rawPath}/${entry.name}`)}><span className="entry-name"><Folder size={18} />{entry.name}</span><code>{entry.cid}</code><ChevronRight size={17} /></Link>)}</div>}</div>}
-    <p className="explorer-note">Directory view shows names and content identifiers only.</p>
-  </main></>
+  return (
+    <div className="flex min-h-svh flex-col">
+      <Header />
+      <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-10">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <div className="text-sm text-muted-foreground">Immutable explorer</div>
+            <h1 className="text-2xl font-semibold tracking-tight">Directory</h1>
+          </div>
+          <Button asChild variant="outline" size="sm">
+            <a href={gatewayPath(rawPath)}>Open native gateway <ExternalLink className="size-4" /></a>
+          </Button>
+        </div>
+
+        <Breadcrumb className="mt-6">
+          <BreadcrumbList>
+            <BreadcrumbItem><BreadcrumbLink asChild><Link to="/explore">Explorer</Link></BreadcrumbLink></BreadcrumbItem>
+            {breadcrumb.map((part, index) => {
+              const label = index === 0 ? `${part.slice(0, 12)}…` : part
+              const last = index === breadcrumb.length - 1
+              return (
+                <Fragment key={`${part}-${index}`}>
+                  <BreadcrumbSeparator />
+                  <BreadcrumbItem>
+                    {last
+                      ? <BreadcrumbPage className="max-w-[200px] truncate">{label}</BreadcrumbPage>
+                      : <BreadcrumbLink asChild><Link to={ipfsPathToExplorerPath(`/ipfs/${breadcrumb.slice(0, index + 1).join('/')}`)}>{label}</Link></BreadcrumbLink>}
+                  </BreadcrumbItem>
+                </Fragment>
+              )
+            })}
+          </BreadcrumbList>
+        </Breadcrumb>
+
+        <div className="mt-6 space-y-6">
+          {loading && (
+            <div className="space-y-3">
+              <Skeleton className="h-11 w-full" />
+              <Skeleton className="h-11 w-full" />
+              <Skeleton className="h-11 w-full" />
+            </div>
+          )}
+          {error && (
+            <Alert variant="destructive">
+              <CircleAlert className="size-4" />
+              <AlertTitle>Could not open this directory</AlertTitle>
+              <AlertDescription>
+                {error.replaceAll('_', ' ')}. <a className="underline underline-offset-4" href={gatewayPath(rawPath)}>Open it in the native gateway</a>.
+              </AlertDescription>
+            </Alert>
+          )}
+          {previewType && <FilePreview path={rawPath} type={previewType} />}
+          {directory && (
+            <Card>
+              <CardHeader>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <CardTitle className="text-base tabular-nums">{directory.entries.length} {directory.entries.length === 1 ? 'entry' : 'entries'}</CardTitle>
+                  <code className="max-w-[280px] truncate rounded bg-muted px-2 py-1 font-mono text-xs">{directory.resolvedCid}</code>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {directory.entries.length === 0
+                  ? <p className="text-sm text-muted-foreground">This directory is empty.</p>
+                  : (
+                    <div className="divide-y overflow-hidden rounded-md border">
+                      {directory.entries.map((entry) => (
+                        <Link
+                          key={`${entry.name}-${entry.cid}`}
+                          to={ipfsPathToExplorerPath(`${rawPath}/${entry.name}`)}
+                          className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm transition-colors hover:bg-accent"
+                        >
+                          <span className="flex min-w-0 items-center gap-2"><Folder className="size-4 shrink-0 text-muted-foreground" /><span className="truncate">{entry.name}</span></span>
+                          <span className="flex items-center gap-2 text-muted-foreground">
+                            <code className="hidden max-w-[220px] truncate font-mono text-xs sm:block">{entry.cid}</code>
+                            <ChevronRight className="size-4 shrink-0" />
+                          </span>
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+              </CardContent>
+            </Card>
+          )}
+        </div>
+
+        <p className="mt-6 text-xs text-muted-foreground">Directory view shows names and content identifiers only.</p>
+      </main>
+    </div>
+  )
 }
 
-export default function App() { return <Routes><Route path="/" element={<Home />} /><Route path="/explore/*" element={<Explorer />} /><Route path="*" element={<Navigate to="/" replace />} /></Routes> }
+export default function App() {
+  return (
+    <Routes>
+      <Route path="/" element={<Home />} />
+      <Route path="/explore/*" element={<Explorer />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  )
+}
