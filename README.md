@@ -82,8 +82,11 @@ See [`/docs/environment-variables.md`](./docs/environment-variables.md).
 ### WebUI development
 
 Run `make dev` (or `make webui-dev`) to start the Vite development server.
-Run Rainbow separately when the UI needs its directory API or gateway
-content. `make test` runs the Go and WebUI test suites.
+This target does not start Rainbow. Use `make go-dev` to build the WebUI,
+embed it in a local `./rainbow` binary, and run the Go daemon. `make go-dev`
+uses a fresh temporary datadir by default; set `RAINBOW_DATADIR` when you
+intentionally want to use a specific development data directory. `make test`
+runs the Go and WebUI test suites.
 
 The WebUI is served from `/` and `/explore` by the gateway. Its directory API
 is available at `/_rainbow/api/v1/directory` only with the literal

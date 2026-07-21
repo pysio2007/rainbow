@@ -1,7 +1,11 @@
-.PHONY: build webui-build webui-dev dev test
+.PHONY: build go-dev webui-build webui-dev dev test
 
 build: webui-build
 	go build
+
+go-dev: webui-build
+	go build
+	RAINBOW_DATADIR="$${RAINBOW_DATADIR:-$$(mktemp -d "$${TMPDIR:-/tmp}/rainbow-dev.XXXXXX")}" ./rainbow
 
 webui-build:
 	bun install --cwd webui --frozen-lockfile

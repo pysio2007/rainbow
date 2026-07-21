@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { ArrowUpRight, ChevronRight, CircleAlert, Compass, ExternalLink, Folder, Search, Sparkles } from 'lucide-react'
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { directoryApiPath, explorerPathToIpfsPath, gatewayPath, ipfsPathToExplorerPath, normalizeInput } from '@/lib/normalizer'
+import { parseVersionText } from '@/lib/version'
 
 type Directory = { version: number; path: string; resolvedCid: string; entries: { name: string; cid: string }[] }
 const sampleCid = 'QmYwAPJzv5CZsnAzt8auVZRnZQ5J7cV7Wc6YzS4hGJ5a6H'
@@ -38,7 +39,9 @@ function SearchBox({ initial = '' }: { initial?: string }) {
 
 function Home() {
   const [version, setVersion] = useState('')
-  useEffect(() => { fetch('/version').then((response) => response.ok ? response.text() : '').then(setVersion).catch(() => undefined) }, [])
+  useEffect(() => {
+    fetch('/version').then(async (response) => response.ok ? parseVersionText(response.headers.get('content-type'), await response.text()) : '').then(setVersion).catch(() => undefined)
+  }, [])
   return <><Header /><main className="home">
     <section className="hero">
       <div className="hero-kicker"><Sparkles size={15} /> public IPFS gateway</div>
