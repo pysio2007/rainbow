@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatBytes, formatCount } from './stats'
+import { formatBytes, formatCount } from './format'
 
 describe('formatCount', () => {
   it.each([

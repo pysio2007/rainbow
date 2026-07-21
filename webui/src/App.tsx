@@ -1,12 +1,17 @@
 import { useEffect, useState } from 'react'
-import { ArrowUpRight, ChevronRight, CircleAlert, Compass, ExternalLink, FileAudio, FileImage, FileText, FileVideo, Folder, Search, Sparkles } from 'lucide-react'
+import type { ReactNode } from 'react'
+import { ArrowUpRight, ChevronRight, CircleAlert, Compass, ExternalLink, FileAudio, FileCode, FileImage, FileText, FileVideo, Folder, Search, Sparkles } from 'lucide-react'
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import type { FilePreviewType } from '@/lib/file-preview'
-import { resolveFilePreviewType } from '@/lib/file-preview'
+import { isTextContentType, resolveFilePreviewType } from '@/lib/file-preview'
+import { resolveMarkdownUrl } from '@/lib/markdown'
 import { directoryApiPath, explorerPathToIpfsPath, gatewayPath, ipfsPathToExplorerPath, normalizeInput } from '@/lib/normalizer'
 import { parseVersionText } from '@/lib/version'
+import { formatBytes, formatCount } from '@/lib/format'
 import type { GatewayStats } from '@/lib/stats'
-import { fetchStats, formatBytes, formatCount } from '@/lib/stats'
+import { fetchStats } from '@/lib/stats'
 
 type Directory = { version: number; path: string; resolvedCid: string; entries: { name: string; cid: string }[] }
 const sampleCid = 'QmYwAPJzv5CZsnAzt8auVZRnZQ5J7cV7Wc6YzS4hGJ5a6H'
@@ -62,21 +67,96 @@ function Home() {
   </main><footer className="site-footer"><span>suse.cc / public IPFS gateway</span>{version && <span>{version.trim()}</span>}</footer></>
 }
 
+const previewTextLimit = 1 << 20 // 1 MiB
+
+type FileMeta = { size: number | null; contentType: string | null }
+
+function useFileMeta(url: string): FileMeta | null {
+  const [meta, setMeta] = useState<FileMeta | null>(null)
+  useEffect(() => {
+    let active = true
+    const controller = new AbortController()
+    setMeta(null)
+    fetch(url, { method: 'HEAD', signal: controller.signal })
+      .then((response) => {
+        if (!active) return
+        if (!response.ok) { setMeta({ size: null, contentType: null }); return }
+        const length = response.headers.get('content-length')
+        const size = length && /^\d+$/.test(length) ? Number(length) : null
+        setMeta({ size, contentType: response.headers.get('content-type') })
+      })
+      .catch(() => { if (active) setMeta({ size: null, contentType: null }) })
+    return () => { active = false; controller.abort() }
+  }, [url])
+  return meta
+}
+
+type TextState = 'loading' | 'ready' | 'too-large' | 'error'
+
+function useTextContent(url: string, enabled: boolean, size: number | null): { body: string; state: TextState } {
+  const [body, setBody] = useState('')
+  const [state, setState] = useState<TextState>('loading')
+  useEffect(() => {
+    if (!enabled) return
+    if (size != null && size > previewTextLimit) { setState('too-large'); return }
+    let active = true
+    const controller = new AbortController()
+    setState('loading')
+    fetch(url, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('fetch failed')
+        const text = await response.text()
+        if (active) { setBody(text); setState('ready') }
+      })
+      .catch((error) => { if (active && error?.name !== 'AbortError') setState('error') })
+    return () => { active = false; controller.abort() }
+  }, [url, enabled, size])
+  return { body, state }
+}
+
 function FilePreview({ path, type }: { path: string; type: FilePreviewType }) {
   const url = gatewayPath(path)
   const name = decodeURIComponent(path.split('/').pop() || 'IPFS file')
-  const icon = type === 'image' ? <FileImage size={18} /> : type === 'audio' ? <FileAudio size={18} /> : type === 'video' ? <FileVideo size={18} /> : <FileText size={18} />
-  const label = type === 'unknown' ? 'Preview unavailable' : `${type.toUpperCase()} preview`
+  const meta = useFileMeta(url)
+  const settled = meta !== null
+  const effectiveType: FilePreviewType = type === 'unknown' && settled && isTextContentType(meta.contentType) ? 'text' : type
+  const isTextual = effectiveType === 'markdown' || effectiveType === 'text'
+  const { body, state } = useTextContent(url, isTextual && settled, meta?.size ?? null)
 
-  return <section className={`file-preview file-preview-${type}`} aria-label={`${label}: ${name}`}>
-    <div className="file-preview-heading"><div className="file-preview-label">{icon}<span>{label}</span></div><code title={name}>{name}</code></div>
-    {type === 'image' && <img className="preview-image" src={url} alt={name} />}
-    {type === 'audio' && <audio className="preview-audio" controls preload="metadata" src={url} aria-label={`Play ${name}`}>Your browser cannot play this audio file.</audio>}
-    {type === 'video' && <video className="preview-video" controls preload="metadata" src={url} aria-label={`Play ${name}`}>Your browser cannot play this video file.</video>}
-    {type === 'pdf' && <iframe className="preview-pdf" src={url} title={`Preview of ${name}`} />}
-    {type === 'unknown' && <div className="preview-unavailable"><FileText size={28} /><h2 id="file-preview-title">This file cannot be previewed here</h2><p>Open the native gateway to view or download this content.</p></div>}
-    {type !== 'unknown' && <p className="preview-fallback">Having trouble loading it? <a href={url}>Open native gateway <ArrowUpRight size={14} /></a></p>}
-    {type === 'unknown' && <a className="preview-open" href={url}>Open native gateway <ArrowUpRight size={14} /></a>}
+  const icon = effectiveType === 'image' ? <FileImage size={18} />
+    : effectiveType === 'audio' ? <FileAudio size={18} />
+    : effectiveType === 'video' ? <FileVideo size={18} />
+    : effectiveType === 'text' ? <FileCode size={18} />
+    : <FileText size={18} />
+  const label = effectiveType === 'unknown' ? 'Preview unavailable' : `${effectiveType.toUpperCase()} preview`
+
+  const nativeLink = <a className="preview-open" href={url}>Open native gateway <ArrowUpRight size={14} /></a>
+  const tooLarge = <div className="preview-unavailable"><FileText size={28} /><h2>This file is too large to preview</h2><p>Open the native gateway to view or download it.</p>{nativeLink}</div>
+  const unavailable = <div className="preview-unavailable"><FileText size={28} /><h2 id="file-preview-title">This file cannot be previewed here</h2><p>Open the native gateway to view or download this content.</p>{nativeLink}</div>
+  const loading = <div className="status"><div className="spinner" />Loading file</div>
+
+  let content: ReactNode = null
+  if (effectiveType === 'image') content = <img className="preview-image" src={url} alt={name} />
+  else if (effectiveType === 'audio') content = <audio className="preview-audio" controls preload="metadata" src={url} aria-label={`Play ${name}`}>Your browser cannot play this audio file.</audio>
+  else if (effectiveType === 'video') content = <video className="preview-video" controls preload="metadata" src={url} aria-label={`Play ${name}`}>Your browser cannot play this video file.</video>
+  else if (effectiveType === 'pdf') content = <iframe className="preview-pdf" src={url} title={`Preview of ${name}`} />
+  else if (isTextual) {
+    if (!settled || state === 'loading') content = loading
+    else if (state === 'too-large') content = tooLarge
+    else if (state === 'error') content = unavailable
+    else if (effectiveType === 'markdown') content = <div className="preview-markdown"><ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={(value) => resolveMarkdownUrl(path, value)}>{body}</ReactMarkdown></div>
+    else content = <pre className="preview-text">{body}</pre>
+  } else content = settled ? unavailable : loading
+
+  const showFallback = content !== unavailable && content !== tooLarge && content !== loading
+
+  return <section className={`file-preview file-preview-${effectiveType}`} aria-label={`${label}: ${name}`}>
+    <div className="file-preview-heading">
+      <div className="file-preview-label">{icon}<span>{label}</span></div>
+      <div className="file-preview-meta">{meta?.size != null && <span className="file-size">{formatBytes(meta.size)}</span>}<code title={name}>{name}</code></div>
+    </div>
+    {content}
+    {showFallback && <p className="preview-fallback">Having trouble loading it? <a href={url}>Open native gateway <ArrowUpRight size={14} /></a></p>}
   </section>
 }
 
