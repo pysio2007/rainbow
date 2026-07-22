@@ -240,7 +240,7 @@ func TestWebUIHandlerRestrictsFilesAndFallback(t *testing.T) {
 	}
 }
 
-func TestUIHostGateAndDirectoryMethod(t *testing.T) {
+func TestUIHostRoutingAndDirectoryMethod(t *testing.T) {
 	gate := withUIHostGate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -250,12 +250,8 @@ func TestUIHostGateAndDirectoryMethod(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "http://"+host+"/explore", nil)
 		res := httptest.NewRecorder()
 		gate.ServeHTTP(res, req)
-		want := http.StatusNotFound
-		if host == "127.0.0.1:8090" {
-			want = http.StatusNoContent
-		}
-		if res.Code != want {
-			t.Fatalf("host %q status = %d, want %d", host, res.Code, want)
+		if res.Code != http.StatusNoContent {
+			t.Fatalf("host %q status = %d, want %d", host, res.Code, http.StatusNoContent)
 		}
 	}
 
@@ -282,10 +278,19 @@ func TestSetupGatewayHandlerPortalHostAndNativeRoutes(t *testing.T) {
 	if portal.StatusCode != http.StatusOK || !strings.Contains(portal.Header.Get("Content-Type"), "text/html") {
 		t.Fatalf("literal portal response = %d content-type %q", portal.StatusCode, portal.Header.Get("Content-Type"))
 	}
-	for _, target := range []string{"/", "/index.html", "/assets/index-BsmBgxAz.js"} {
-		res := request(http.MethodGet, target, "localhost:8090")
-		if res.StatusCode != http.StatusNotFound {
-			t.Fatalf("hosted UI path %s on localhost status = %d", target, res.StatusCode)
+	for _, host := range []string{"localhost:8090", "example.com"} {
+		for _, target := range []string{"/", "/index.html"} {
+			res := request(http.MethodGet, target, host)
+			body, err := io.ReadAll(res.Body)
+			if err != nil {
+				t.Fatalf("read hosted UI path %s response: %v", target, err)
+			}
+			if res.StatusCode != http.StatusOK {
+				t.Fatalf("hosted UI path %s on %s status = %d, want %d", target, host, res.StatusCode, http.StatusOK)
+			}
+			if !strings.Contains(res.Header.Get("Content-Type"), "text/html") || !strings.Contains(string(body), "<!doctype html>") {
+				t.Fatalf("hosted UI path %s on %s is not identifiable WebUI content: content-type %q body %q", target, host, res.Header.Get("Content-Type"), string(body))
+			}
 		}
 	}
 	version := request(http.MethodGet, "/version", "native.example")

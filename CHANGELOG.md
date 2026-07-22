@@ -35,6 +35,8 @@ The following emojis are used to highlight certain changes:
 
 ### Fixed
 
+- Serve the WebUI on public hostnames instead of returning `404`.
+
 ### Removed
 
 ### Security

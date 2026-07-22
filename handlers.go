@@ -356,10 +356,6 @@ func webUIHandler() http.Handler {
 func withUIHostGate(ui, native http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		uiPath := r.URL.Path == "/" || r.URL.Path == "/explore" || r.URL.Path == "/explore/" || strings.HasPrefix(r.URL.Path, "/explore/") || r.URL.Path == directoryAPIPath || r.URL.Path == statsAPIPath || r.URL.Path == "/index.html" || strings.HasPrefix(r.URL.Path, "/assets/")
-		if uiPath && r.Host != "127.0.0.1:8090" {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
 		if uiPath {
 			ui.ServeHTTP(w, r)
 			return
