@@ -102,6 +102,12 @@ is available at `/_rainbow/api/v1/directory` only with the literal
 `Host: 127.0.0.1:8090` host policy. This host check is routing isolation, not
 a security boundary; use listener binding and proxy policy for exposure.
 
+### Image transformations
+
+Rainbow serves a Cloudflare Images-like on-the-fly image transformation
+endpoint at `/i/<cid>[/path]` (resize, crop, quality, and JPEG/PNG/GIF/WebP/AVIF
+conversion). See [`/docs/image-transformations.md`](./docs/image-transformations.md).
+
 
 ## Configuration
 

@@ -15,6 +15,12 @@ The following emojis are used to highlight certain changes:
 
 ### Added
 
+- ✨ Add a Cloudflare Images-like on-the-fly image transformation endpoint at
+  `/i/<cid>[/path]`, supporting `w`/`h`/`dpr` resizing, `fit`
+  (contain/cover/crop/scale-down/pad), `q` quality, and `format` conversion to
+  JPEG/PNG/GIF/WebP/AVIF (with `format=auto` content negotiation via `Accept`).
+  Rendered images are content-addressed and served with immutable caching. All
+  codecs are pure Go so `CGO_ENABLED=0` builds are unaffected.
 - Add the Bun/Vite WebUI build, committed `webui/dist` assets, WebUI CI
   reproducibility checks, and Docker runtime smoke coverage.
 - Add configuration for a logical local blockstore payload capacity limit.

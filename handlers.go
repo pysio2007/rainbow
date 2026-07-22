@@ -725,6 +725,11 @@ func setupGatewayHandler(cfg Config, nd *Node) (http.Handler, error) {
 	nativeHandler = http.Handler(gateway.NewHostnameHandler(gwConf, backend, nativeHandler))
 	handler := withUIHostGate(uiMux, nativeHandler)
 
+	// The Cloudflare Images-like /i/ endpoint is served on every host, ahead of
+	// the hostname/UI gating, and reads content directly from the backend.
+	imgHandler := withHTTPMetrics(imageHandler(cfg, backend, nd.stats), "image", cfg.disableMetrics)
+	handler = withImageRoute(imgHandler, handler)
+
 	// Add custom headers and liberal CORS.
 	handler = gateway.NewHeaders(headers).ApplyCors().Wrap(handler)
 
