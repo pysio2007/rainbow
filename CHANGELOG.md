@@ -15,6 +15,13 @@ The following emojis are used to highlight certain changes:
 
 ### Added
 
+- Add the read-only Root Inspector metadata API at
+  `/_rainbow/api/v1/metadata` with frozen schema v1 and bounded root-block
+  inspection; it makes no passive-retrieval claim.
+- Add bounded root-only DAG inspection, validated IPNS record summaries, and
+  fixed-scope CAR verification APIs under `/_rainbow/api/v1/`.
+- Harden DAG resource-limit reporting and CAR block-scope verification so extra
+  sections cannot be reported as verified.
 - Add a read-only SSE provider discovery API at
   `/_rainbow/api/v1/providers`, with bounded caching, request rate limiting,
   public-address filtering, and bounded concurrent lookups.

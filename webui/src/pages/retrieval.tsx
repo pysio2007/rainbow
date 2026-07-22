@@ -1,0 +1,29 @@
+import { useEffect, useState } from 'react'
+import { Activity, CircleAlert, Network, RefreshCw } from 'lucide-react'
+import { useParams } from 'react-router-dom'
+import { Header } from '@/components/layout'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { normalizeMetadata, type MetadataV1 } from '@/lib/inspector'
+import { metadataErrorCode } from '@/lib/inspector'
+import { normalizeProviderTarget, parseProviderStream, providerUrl, type ProviderSummary } from '@/lib/providers'
+
+type ObservationState = 'idle' | 'running' | 'complete' | 'error'
+
+export default function Retrieval() {
+  const { cid: rawCid = '' } = useParams<{ cid: string }>(); const [cid, setCid] = useState(''); const [metadata, setMetadata] = useState<MetadataV1 | null>(null); const [providers, setProviders] = useState<ProviderSummary | null>(null); const [state, setState] = useState<ObservationState>('idle'); const [error, setError] = useState(''); const [controller, setController] = useState<AbortController | null>(null)
+  useEffect(() => { try { setCid(normalizeProviderTarget(rawCid)) } catch { setError('invalid_cid') } }, [rawCid])
+  async function run() {
+    if (!cid) return
+    const next = new AbortController(); setController(next); setMetadata(null); setProviders(null); setError(''); setState('running')
+    const metadataRequest = fetch(`/_rainbow/api/v1/metadata?cid=${encodeURIComponent(cid)}`, { headers: { Accept: 'application/json' }, signal: next.signal }).then(async (response) => { const body = await response.json().catch(() => null); if (!response.ok) throw new Error(metadataErrorCode(response, body)); const result = normalizeMetadata(body); if (!result) throw new Error('invalid_metadata'); return result })
+    const providerRequest = fetch(`/_rainbow/api/v1/providers?cid=${encodeURIComponent(cid)}`, { headers: { Accept: 'text/event-stream' }, signal: next.signal }).then(async (response) => { if (!response.ok || !response.body) throw new Error(`provider_${response.status}`); return parseProviderStream(response, () => {}, next.signal) })
+    const [metadataResult, providerResult] = await Promise.allSettled([metadataRequest, providerRequest])
+    if (metadataResult.status === 'fulfilled') setMetadata(metadataResult.value); else setError((metadataResult.reason as Error)?.message || 'metadata_unavailable')
+    if (providerResult.status === 'fulfilled') setProviders(providerResult.value); else setError((current) => current || (providerResult.reason as Error)?.message || 'provider_unavailable')
+    setState('complete'); setController(null)
+  }
+  return <div className="flex min-h-svh flex-col"><Header /><main className="mx-auto w-full max-w-5xl flex-1 px-6 py-10"><div className="flex items-center gap-2 text-sm text-muted-foreground"><Activity className="size-4" /> Retrieval observations</div><h1 className="mt-3 break-all text-2xl font-semibold tracking-tight">{cid || rawCid}</h1><p className="mt-3 max-w-2xl text-muted-foreground">A metadata observation may cause this gateway to retrieve the root block. Provider lookup is a separate observation. This page shows summaries and does not deliver IPFS content to the browser.</p>{error === 'invalid_cid' && <Alert className="mt-6" variant="destructive"><CircleAlert className="size-4" /><AlertTitle>Invalid CID</AlertTitle><AlertDescription>Enter a valid IPFS CID.</AlertDescription></Alert>}{error && error !== 'invalid_cid' && <Alert className="mt-6" variant="destructive"><CircleAlert className="size-4" /><AlertTitle>Some observations could not be completed</AlertTitle><AlertDescription>{error.replaceAll('_', ' ')}. Completed observations remain visible.</AlertDescription></Alert>}<div className="mt-8 flex flex-wrap gap-2"><Button type="button" onClick={() => void run()} disabled={!cid || state === 'running'}>{state === 'running' ? <RefreshCw className="size-4 animate-spin" /> : <Activity className="size-4" />} {state === 'running' ? 'Running observations' : 'Run observations'}</Button>{state === 'running' && <Button type="button" variant="outline" onClick={() => controller?.abort()}>Cancel</Button>}</div>{state === 'idle' && <p className="mt-6 text-sm text-muted-foreground">No observations have been requested.</p>}{(metadata || state === 'running') && <Card className="mt-6"><CardHeader><CardTitle className="text-base">Root metadata observation</CardTitle></CardHeader><CardContent>{metadata ? <dl className="grid gap-5 sm:grid-cols-2"><div><dt className="text-xs text-muted-foreground">Root status</dt><dd>{metadata.root.status.replaceAll('_', ' ')}</dd></div><div><dt className="text-xs text-muted-foreground">Block verified</dt><dd>{metadata.root.blockVerified ? 'Yes' : 'No'}</dd></div></dl> : <p className="text-sm text-muted-foreground">Waiting for metadata response…</p>}</CardContent></Card>}{(providers || state === 'running') && <Card className="mt-6"><CardHeader><CardTitle className="flex items-center gap-2 text-base"><Network className="size-4" />Provider lookup observation</CardTitle></CardHeader><CardContent>{providers ? <div className="flex flex-wrap items-center gap-3"><Badge variant={providers.timedOut ? 'outline' : 'secondary'}>{providers.count} observations</Badge><span className="text-sm text-muted-foreground">{providers.durationMs} ms · {providers.cached ? 'cached' : 'not cached'}{providers.timedOut ? ' · timed out' : ''}</span><Button asChild variant="link" className="h-auto p-0"><a href={providerUrl(cid)}>View Provider results</a></Button></div> : <p className="text-sm text-muted-foreground">Waiting for provider lookup response…</p>}</CardContent></Card>}</main></div>
+}

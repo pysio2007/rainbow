@@ -1,23 +1,23 @@
 # Rainbow Agent Notes
 
-## Scope and commands
+## Structure
 
-- This is one Go module (`github.com/ipfs/rainbow`) requiring Go `1.25.7`. The root `main` package builds the production `rainbow` daemon; `main.go` owns CLI and runtime wiring.
-- Build from the repository root with `make build` (or `go build` for Go-only work); `make build` first builds the Bun 1.3.3 WebUI and embeds `webui/dist`, while Go build creates the ignored `./rainbow` binary. `version.json` is embedded by `version.go`, so it must be present in builds.
-- Run the repository test suite with `go test ./...`.
-- Run `make test` for the Go and WebUI test suites. `make dev` starts only Vite. `make go-dev` builds the embedded WebUI and local `./rainbow` binary, then runs the Go daemon with a fresh temporary datadir unless `RAINBOW_DATADIR` is set.
-- Run the end-to-end CLI test alone with `go test . -run '^TestEndToEndTrustlessGatewayDomains$'`. It runs `go install .`, starts the binary, and is skipped on Windows.
-- There is no repository-local lint, typecheck, or task-runner command. CI's Go test and check jobs delegate to `ipdxco/unified-github-workflows`; do not claim an unverified local command matches them.
+- The root is one Go `main` module (`github.com/ipfs/rainbow`, Go `1.25.7`); `main.go` owns CLI/startup and `handlers.go` wires gateway routes, UI APIs, and embedded assets.
+- `webui/` is a separate Bun `1.3.3` React/Vite multi-page app. Its output is embedded from `webui/dist`; new or renamed UI routes need matching Vite inputs (`webui/vite.config.ts`) and Go route mapping (`handlers.go`).
+- Keep `version.json` available: `version.go` embeds it into every Go build.
 
-## Runtime and integration
+## Build And Test
 
-- Rainbow defaults its persistent datadir to the directory where it runs and can create `libp2p.key`, blockstore, and datastore state there. `make go-dev` avoids checkout pollution by using a fresh temporary datadir; set `RAINBOW_DATADIR` explicitly when persistence is intended. For other ad hoc runs, use `--datadir <temp-dir>` or `RAINBOW_DATADIR`.
-- Flags and `RAINBOW_*` settings are documented in `docs/environment-variables.md`; keep that reference aligned with configuration changes.
-- Gateway conformance is separate from `go test`: it needs Bash, curl, Kubo `v0.33.0-rc1`, gateway-conformance fixtures, and `GATEWAY_CONFORMANCE_TEST=true`; CI exercises three backend modes against Rainbow on port `8090`.
-- Docker builds use Go `1.26`, cross-compile with `CGO_ENABLED=0`, and run the final image as the non-root `ipfs` user. Preserve those constraints when changing the image.
-- Docker also builds the WebUI with the pinned Bun 1.3.3 image. `webui/dist` is committed and CI fails when a build changes it or creates untracked files there.
+- Use `make build` for a complete binary: it installs WebUI dependencies with the frozen lockfile, runs the TypeScript/Vite build, then runs `go build`. A bare `go build` requires an existing `webui/dist` because of `go:embed`.
+- `make test` runs `go test ./...` before installing WebUI dependencies and running Vitest. For focused checks use `go test . -run '^TestName$'` or `bun run --cwd webui test -- path/to/file.test.ts`.
+- `go test . -run '^TestEndToEndTrustlessGatewayDomains$'` installs and starts the binary as a CLI smoke test; it is skipped on Windows.
+- `bun run --cwd webui build` is the WebUI typecheck as well as its production build; there is no repository-local lint or separate typecheck command.
+- Run `make webui-build` before validating newly added embedded page entries: the Inspector and Retrieval Go route tests skip when their generated files are absent from `webui/dist`.
 
-## PR and release checks
+## Local Runtime And CI
 
-- A PR changing `*.go`, `go.mod`, or `go.sum` must also update `CHANGELOG.md`, unless its title includes `[skip changelog]` or it has the `skip/changelog` label.
-- Release PRs update both `CHANGELOG.md` and `version.json`; see the release steps in `README.md`.
+- `make dev` starts only Vite. `make go-dev` rebuilds the WebUI and daemon, then uses a temporary datadir unless `RAINBOW_DATADIR` is set. Direct daemon runs default persistent state to the current directory; use `RAINBOW_DATADIR` or `--datadir` to avoid creating keys and datastore state in the checkout.
+- Gateway conformance is separate from unit tests: its CI workflow needs Bash, curl, Kubo `v0.33.0-rc1`, downloaded fixtures, and `GATEWAY_CONFORMANCE_TEST=true`, then exercises three backend modes.
+- `webui/dist` is generated output and must not be committed to Git. The current WebUI CI workflow still requires it to be tracked and reproducible, so that check needs alignment with this policy.
+- Docker intentionally builds with Go `1.26`, cross-compiles with `CGO_ENABLED=0`, and runs as the non-root `ipfs` user.
+- PRs that modify Go files, `go.mod`, or `go.sum` must update `CHANGELOG.md` unless the title contains `[skip changelog]` or the PR has the `skip/changelog` label.

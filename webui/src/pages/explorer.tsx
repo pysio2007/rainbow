@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { ArrowUpRight, ChevronRight, CircleAlert, Compass, ExternalLink, FileAudio, FileCode, FileImage, FileText, FileVideo, Folder, Network } from 'lucide-react'
+import { ArrowUpRight, Check, ChevronDown, ChevronRight, CircleAlert, Clipboard, Compass, ExternalLink, FileAudio, FileCode, FileImage, FileText, FileVideo, Folder, Network, Search, SlidersHorizontal } from 'lucide-react'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -9,6 +9,7 @@ import { isTextContentType, resolveFilePreviewType } from '@/lib/file-preview'
 import { resolveMarkdownUrl } from '@/lib/markdown'
 import { directoryApiPath, explorerPathToIpfsPath, gatewayPath, ipfsPathToExplorerPath } from '@/lib/normalizer'
 import { providerUrl } from '@/lib/providers'
+import { defaultDirectoryTools, filterDirectoryEntries, rootCidFromPath, sortDirectoryEntries, type DirectorySortDirection, type DirectorySortKey } from '@/lib/explorer-data'
 import { formatBytes } from '@/lib/format'
 import { Header, SearchBox } from '@/components/layout'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -18,6 +19,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Input } from '@/components/ui/input'
 
 type Directory = { version: number; path: string; resolvedCid: string; entries: { name: string; cid: string }[] }
 
@@ -168,8 +170,13 @@ export default function Explorer() {
   const [error, setError] = useState(pathError)
   const [previewType, setPreviewType] = useState<FilePreviewType | null>(null)
   const [loading, setLoading] = useState(true)
+  const [filter, setFilter] = useState('')
+  const [sortKey, setSortKey] = useState<DirectorySortKey>('name')
+  const [sortDirection, setSortDirection] = useState<DirectorySortDirection>('asc')
+  const [copied, setCopied] = useState('')
 
   useEffect(() => {
+    setFilter(defaultDirectoryTools.filter); setSortKey(defaultDirectoryTools.sortKey); setSortDirection(defaultDirectoryTools.sortDirection); setCopied('')
     if (!rawPath) { setLoading(false); return }
     let active = true
     setLoading(true); setError(''); setDirectory(null); setPreviewType(null)
@@ -182,6 +189,13 @@ export default function Explorer() {
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
   }, [rawPath])
+
+  const visibleEntries = directory ? sortDirectoryEntries(filterDirectoryEntries(directory.entries, filter), sortKey, sortDirection) : []
+  async function copyValue(value: string, label: string) {
+    await navigator.clipboard?.writeText(value)
+    setCopied(label)
+    window.setTimeout(() => setCopied(''), 1200)
+  }
 
   if (!rawPath) {
     return (
@@ -252,30 +266,27 @@ export default function Explorer() {
             <Card>
               <CardHeader>
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <CardTitle className="text-base tabular-nums">{directory.entries.length} {directory.entries.length === 1 ? 'entry' : 'entries'}</CardTitle>
-                  <div className="flex items-center gap-2"><Badge variant="outline">Directory</Badge><code className="max-w-[280px] truncate rounded bg-muted px-2 py-1 font-mono text-xs">{directory.resolvedCid}</code></div>
+                  <CardTitle className="text-base tabular-nums">{visibleEntries.length} of {directory.entries.length} entries</CardTitle>
+                  <div className="flex flex-wrap items-center gap-1"><Badge variant="outline">Directory</Badge><code className="max-w-[280px] truncate rounded bg-muted px-2 py-1 font-mono text-xs">{directory.resolvedCid}</code><Button type="button" variant="ghost" size="icon-sm" title="Copy resolved CID" aria-label="Copy resolved CID" onClick={() => void copyValue(directory.resolvedCid, 'resolved CID')}>{copied === 'resolved CID' ? <Check className="size-4" /> : <Clipboard className="size-4" />}</Button><Button asChild variant="ghost" size="icon-sm" title="Inspect root CID" aria-label="Inspect root CID"><a href={`/inspect/${encodeURIComponent(rootCidFromPath(rawPath))}`}><SlidersHorizontal className="size-4" /></a></Button></div>
                 </div>
               </CardHeader>
               <CardContent>
+                <div className="mb-4 flex flex-col gap-2 sm:flex-row"><div className="relative min-w-0 flex-1"><Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" /><Input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter name or CID" aria-label="Filter directory entries" className="pl-9" /></div><div className="flex gap-2"><Button type="button" variant="outline" size="sm" onClick={() => { setSortKey(sortKey === 'name' ? 'cid' : 'name'); setSortDirection('asc') }}><SlidersHorizontal className="size-4" />Sort {sortKey}</Button><Button type="button" variant="outline" size="sm" onClick={() => setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc')}><ChevronDown className={`size-4 transition-transform ${sortDirection === 'desc' ? 'rotate-180' : ''}`} /><span className="sr-only">Toggle sort direction</span></Button>{filter && <Button type="button" variant="ghost" size="sm" onClick={() => setFilter('')}>Clear</Button>}</div></div>
                 {directory.entries.length === 0
                   ? <p className="text-sm text-muted-foreground">This directory is empty.</p>
+                  : visibleEntries.length === 0
+                    ? <p className="py-6 text-center text-sm text-muted-foreground">No entries match this filter.</p>
                   : (
                     <div className="divide-y overflow-hidden rounded-md border">
-                      {directory.entries.map((entry) => (
-                        <Link
-                          key={`${entry.name}-${entry.cid}`}
-                          to={ipfsPathToExplorerPath(`${rawPath}/${entry.name}`)}
-                          className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm transition-colors hover:bg-accent"
-                        >
-                          <span className="flex min-w-0 items-center gap-2"><Folder className="size-4 shrink-0 text-muted-foreground" /><span className="truncate">{entry.name}</span></span>
-                          <span className="flex items-center gap-2 text-muted-foreground">
-                            <code className="hidden max-w-[220px] truncate font-mono text-xs sm:block">{entry.cid}</code>
-                            <ChevronRight className="size-4 shrink-0" />
-                          </span>
-                        </Link>
+                      {visibleEntries.map((entry) => (
+                        <div key={`${entry.name}-${entry.cid}`} className="flex items-center justify-between gap-2 px-3 py-2.5 text-sm transition-colors hover:bg-accent">
+                          <Link to={ipfsPathToExplorerPath(`${rawPath}/${entry.name}`)} className="flex min-w-0 flex-1 items-center gap-2"><Folder className="size-4 shrink-0 text-muted-foreground" /><span className="truncate">{entry.name}</span></Link>
+                          <span className="flex shrink-0 items-center gap-1 text-muted-foreground"><code className="hidden max-w-[220px] truncate font-mono text-xs sm:block">{entry.cid}</code><Button type="button" variant="ghost" size="icon-sm" title="Copy entry CID" aria-label="Copy entry CID" onClick={() => void copyValue(entry.cid, entry.name)}>{copied === entry.name ? <Check className="size-4" /> : <Clipboard className="size-4" />}</Button><ChevronRight className="size-4" /></span>
+                        </div>
                       ))}
                     </div>
                   )}
+                <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><span>Names and CIDs only; file type and size are not reported here.</span><Button type="button" variant="link" className="h-auto p-0 text-xs" onClick={() => void copyValue(rawPath, 'path')}>{copied === 'path' ? 'Copied path' : 'Copy path'}</Button></div>
               </CardContent>
             </Card>
           )}

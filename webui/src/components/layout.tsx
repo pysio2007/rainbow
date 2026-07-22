@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
-import { ArrowUpRight, CircleAlert, Compass, Network, Search } from 'lucide-react'
+import { Activity, ArrowUpRight, CircleAlert, Compass, Network, Search, ScanSearch } from 'lucide-react'
 import { gatewayPath, ipfsPathToExplorerPath, normalizeInput } from '@/lib/normalizer'
 import { providerUrl } from '@/lib/providers'
 import { ModeToggle } from '@/components/mode-toggle'
@@ -20,6 +20,8 @@ export function Header() {
             <a href="/explore/"><Compass className="size-4" />Explorer</a>
           </Button>
           <Button asChild variant="ghost" size="sm"><a href="/network/providers/"><Network className="size-4" />Providers</a></Button>
+          <Button asChild variant="ghost" size="sm"><a href="/inspect/"><ScanSearch className="size-4" />Inspector</a></Button>
+          <Button asChild variant="ghost" size="sm"><a href="/retrieval/"><Activity className="size-4" />Retrieval</a></Button>
           <Button asChild variant="ghost" size="sm">
             <a href="/version">Status<ArrowUpRight className="size-4" /></a>
           </Button>
@@ -80,6 +82,16 @@ export function SearchBox({ initial = '' }: { initial?: string }) {
           {target?.kind === 'ipfs' && (
             <Button type="button" variant="secondary" onClick={() => window.location.assign(providerUrl(target.path))}>
               Providers <Network className="size-4" />
+            </Button>
+          )}
+          {target?.kind === 'ipfs' && !target.path.slice('/ipfs/'.length).includes('/') && (
+            <Button type="button" variant="secondary" onClick={() => window.location.assign(`/inspect/${encodeURIComponent(target.path.slice('/ipfs/'.length))}`)}>
+              Inspect <ScanSearch className="size-4" />
+            </Button>
+          )}
+          {target?.kind === 'ipfs' && !target.path.slice('/ipfs/'.length).includes('/') && (
+            <Button type="button" variant="secondary" onClick={() => window.location.assign(`/retrieval/${encodeURIComponent(target.path.slice('/ipfs/'.length))}`)}>
+              Retrieval <Activity className="size-4" />
             </Button>
           )}
         </div>

@@ -448,7 +448,7 @@ func webUIHandler(stats *Stats) http.Handler {
 			return
 		}
 		reqPath := strings.TrimPrefix(r.URL.Path, "/")
-		if reqPath != "" && reqPath != "explore/" && reqPath != "network/providers/" && !fs.ValidPath(reqPath) {
+		if reqPath != "" && reqPath != "explore/" && reqPath != "network/providers/" && reqPath != "inspect/" && reqPath != "retrieval/" && !fs.ValidPath(reqPath) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
@@ -458,6 +458,10 @@ func webUIHandler(stats *Stats) http.Handler {
 			reqPath = "explore/index.html"
 		} else if reqPath == "network/providers" || reqPath == "network/providers/" || strings.HasPrefix(reqPath, "network/providers/") {
 			reqPath = "network/providers/index.html"
+		} else if reqPath == "inspect" || reqPath == "inspect/" || strings.HasPrefix(reqPath, "inspect/") {
+			reqPath = "inspect/index.html"
+		} else if reqPath == "retrieval" || reqPath == "retrieval/" || strings.HasPrefix(reqPath, "retrieval/") {
+			reqPath = "retrieval/index.html"
 		}
 		if !fs.ValidPath(reqPath) {
 			w.WriteHeader(http.StatusNotFound)
@@ -473,7 +477,7 @@ func webUIHandler(stats *Stats) http.Handler {
 
 func withUIHostGate(ui, native http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		uiPath := r.URL.Path == "/" || r.URL.Path == "/explore" || r.URL.Path == "/explore/" || strings.HasPrefix(r.URL.Path, "/explore/") || r.URL.Path == "/network/providers" || r.URL.Path == "/network/providers/" || strings.HasPrefix(r.URL.Path, "/network/providers/") || r.URL.Path == directoryAPIPath || r.URL.Path == statsAPIPath || r.URL.Path == providersAPIPath || r.URL.Path == "/index.html" || strings.HasPrefix(r.URL.Path, "/assets/")
+		uiPath := r.URL.Path == "/" || r.URL.Path == "/explore" || r.URL.Path == "/explore/" || strings.HasPrefix(r.URL.Path, "/explore/") || r.URL.Path == "/network/providers" || r.URL.Path == "/network/providers/" || strings.HasPrefix(r.URL.Path, "/network/providers/") || r.URL.Path == "/inspect" || r.URL.Path == "/inspect/" || strings.HasPrefix(r.URL.Path, "/inspect/") || r.URL.Path == "/retrieval" || r.URL.Path == "/retrieval/" || strings.HasPrefix(r.URL.Path, "/retrieval/") || r.URL.Path == directoryAPIPath || r.URL.Path == statsAPIPath || r.URL.Path == providersAPIPath || r.URL.Path == metadataAPIPath || r.URL.Path == dagAPIPath || r.URL.Path == ipnsAPIPath || r.URL.Path == carAPIPath || r.URL.Path == "/index.html" || strings.HasPrefix(r.URL.Path, "/assets/")
 		if uiPath {
 			ui.ServeHTTP(w, r)
 			return
@@ -833,6 +837,12 @@ func setupGatewayHandler(cfg Config, nd *Node) (http.Handler, error) {
 	uiMux.Handle(directoryAPIPath, directoryHandler(cfg, nd))
 	uiMux.Handle(statsAPIPath, statsHandler(nd.stats))
 	uiMux.Handle(providersAPIPath, newProviderHandler(nd.contentDiscovery))
+	uiMux.Handle(metadataAPIPath, newMetadataHandlerWithOptions(nd.bsrv, metadataHandlerOptions{
+		remoteCAR: cfg.RemoteBackendMode == RemoteBackendCAR,
+	}))
+	uiMux.Handle(dagAPIPath, newDAGHandler(nd.bsrv, cfg.RemoteBackendMode == RemoteBackendCAR))
+	uiMux.Handle(ipnsAPIPath, newIPNSHandler(nd.vs))
+	uiMux.Handle(carAPIPath, newCARHandler(backend, cfg.RemoteBackendMode == RemoteBackendCAR))
 	uiMux.Handle("/", webUIHandler(nd.stats))
 
 	// Construct the HTTP handler for the gateway.

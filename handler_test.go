@@ -267,6 +267,29 @@ func TestWebUIHandlerUsesDistinctHTMLEntries(t *testing.T) {
 	}
 }
 
+func TestWebUIHandlerInspectorEntry(t *testing.T) {
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8090/inspect/"+testProviderCID().String(), nil)
+	webUIHandler(nil).ServeHTTP(res, req)
+	if res.Code == http.StatusNotFound {
+		t.Skip("inspect entry is supplied by the parallel WebUI dist build")
+	}
+	require.Equal(t, http.StatusOK, res.Code)
+	require.Contains(t, res.Body.String(), "<title>Inspector | suse.cc</title>")
+	require.Equal(t, "no-cache", res.Header().Get("Cache-Control"))
+}
+
+func TestWebUIHandlerRetrievalEntry(t *testing.T) {
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8090/retrieval/", nil)
+	webUIHandler(nil).ServeHTTP(res, req)
+	if res.Code == http.StatusNotFound {
+		t.Skip("retrieval entry is supplied by the parallel WebUI dist build")
+	}
+	require.Equal(t, http.StatusOK, res.Code)
+	require.Contains(t, res.Body.String(), "<title>Retrieval | suse.cc</title>")
+}
+
 func TestUIHostRoutingAndDirectoryMethod(t *testing.T) {
 	gate := withUIHostGate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
@@ -274,7 +297,7 @@ func TestUIHostRoutingAndDirectoryMethod(t *testing.T) {
 		w.WriteHeader(http.StatusTeapot)
 	}))
 	for _, host := range []string{"localhost:8090", "example.com", "127.0.0.1:8090"} {
-		for _, path := range []string{"/explore", "/network/providers/index.html", "/network/providers/deep/link"} {
+		for _, path := range []string{"/explore", "/network/providers/index.html", "/network/providers/deep/link", "/inspect/" + testProviderCID().String()} {
 			req := httptest.NewRequest(http.MethodGet, "http://"+host+path, nil)
 			res := httptest.NewRecorder()
 			gate.ServeHTTP(res, req)
