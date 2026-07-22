@@ -23,3 +23,6 @@ flatfs
 
 plan.md
 webui/node_modules
+
+stats.db
+stats.db-journal

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"embed"
@@ -10,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -314,42 +316,152 @@ func withStatsCounter(next http.Handler, stats *Stats) http.Handler {
 	})
 }
 
-func webUIHandler() http.Handler {
+// initialPayload is embedded into index.html as window.__INITIAL__ so the UI's
+// landing page can paint version/stats on first render instead of showing a
+// blank state until the client-side fetch round-trip completes.
+type initialPayload struct {
+	Version string         `json:"version"`
+	Stats   *statsResponse `json:"stats,omitempty"`
+}
+
+// acceptsEncoding reports whether the request's Accept-Encoding header lists enc.
+// It ignores q-values: any non-zero presence is treated as acceptance, matching
+// the precision this static-asset use case needs.
+func acceptsEncoding(r *http.Request, enc string) bool {
+	for _, part := range strings.Split(r.Header.Get("Accept-Encoding"), ",") {
+		if strings.EqualFold(strings.TrimSpace(strings.SplitN(part, ";", 2)[0]), enc) {
+			return true
+		}
+	}
+	return false
+}
+
+// openBestEncoding opens name, preferring a build-time precompressed .br or
+// .gz sibling (see webui/vite.config.ts) when the client supports it. It
+// returns the empty string for encoding when serving the file as-is.
+func openBestEncoding(ui fs.FS, r *http.Request, name string) (fs.File, string) {
+	if acceptsEncoding(r, "br") {
+		if f, err := ui.Open(name + ".br"); err == nil {
+			return f, "br"
+		}
+	}
+	if acceptsEncoding(r, "gzip") {
+		if f, err := ui.Open(name + ".gz"); err == nil {
+			return f, "gzip"
+		}
+	}
+	f, err := ui.Open(name)
+	if err != nil {
+		return nil, ""
+	}
+	return f, ""
+}
+
+func serveUIAsset(w http.ResponseWriter, r *http.Request, ui fs.FS, name string) {
+	w.Header().Set("Vary", "Accept-Encoding")
+	if strings.HasPrefix(name, "assets/") {
+		// Vite fingerprints these filenames with a content hash, so they never
+		// change under a given name: safe to cache forever.
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	}
+
+	file, encoding := openBestEncoding(ui, r, name)
+	if file == nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	content, err := io.ReadAll(file)
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	if ct := mime.TypeByExtension(path.Ext(name)); ct != "" {
+		w.Header().Set("Content-Type", ct)
+	}
+	if encoding != "" {
+		w.Header().Set("Content-Encoding", encoding)
+	}
+	http.ServeContent(w, r, "", info.ModTime(), bytes.NewReader(content))
+}
+
+// serveUIShell renders index.html for every SPA route, injecting the current
+// version/stats snapshot as window.__INITIAL__ so React can paint them on the
+// first render instead of waiting for a post-mount fetch. The shell is
+// regenerated per request (stats change), so it's never cached or served from
+// a precompressed sibling the way hashed assets are.
+func serveUIShell(w http.ResponseWriter, r *http.Request, ui fs.FS, versionText string, stats *Stats) {
+	file, err := ui.Open("index.html")
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	defer file.Close()
+	content, err := io.ReadAll(file)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	payload := initialPayload{Version: versionText}
+	if stats != nil {
+		files, originBytes := stats.Snapshot()
+		payload.Stats = &statsResponse{Version: 1, FilesProcessed: files, OriginBytes: originBytes}
+	}
+	if data, err := json.Marshal(payload); err == nil {
+		injected := append([]byte("<head><script>window.__INITIAL__="), data...)
+		injected = append(injected, []byte("</script>")...)
+		content = bytes.Replace(content, []byte("<head>"), injected, 1)
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Vary", "Accept-Encoding")
+	if acceptsEncoding(r, "gzip") {
+		var buf bytes.Buffer
+		gz := gzip.NewWriter(&buf)
+		_, _ = gz.Write(content)
+		_ = gz.Close()
+		content = buf.Bytes()
+		w.Header().Set("Content-Encoding", "gzip")
+	}
+	w.Header().Set("Content-Length", strconv.Itoa(len(content)))
+	if r.Method == http.MethodHead {
+		return
+	}
+	_, _ = w.Write(content)
+}
+
+func webUIHandler(stats *Stats) http.Handler {
 	ui, _ := fs.Sub(webuiFS, "webui/dist")
+	versionText := fmt.Sprintf("Client: %s\nVersion: %s\n", name, version)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		name := strings.TrimPrefix(r.URL.Path, "/")
-		if name != "" && name != "explore/" && !fs.ValidPath(name) {
+		reqPath := strings.TrimPrefix(r.URL.Path, "/")
+		if reqPath != "" && reqPath != "explore/" && !fs.ValidPath(reqPath) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		if name == "" || name == "explore" || name == "explore/" || strings.HasPrefix(name, "explore/") {
-			name = "index.html"
+		if reqPath == "" || reqPath == "explore" || reqPath == "explore/" || strings.HasPrefix(reqPath, "explore/") {
+			reqPath = "index.html"
 		}
-		if !fs.ValidPath(name) {
+		if !fs.ValidPath(reqPath) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		file, err := ui.Open(name)
-		if err != nil {
-			w.WriteHeader(http.StatusNotFound)
+		if reqPath == "index.html" {
+			serveUIShell(w, r, ui, versionText, stats)
 			return
 		}
-		defer file.Close()
-		info, err := file.Stat()
-		if err != nil || !info.Mode().IsRegular() {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		content, err := io.ReadAll(file)
-		if err != nil {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		http.ServeContent(w, r, path.Base(name), info.ModTime(), bytes.NewReader(content))
+		serveUIAsset(w, r, ui, reqPath)
 	})
 }
 
@@ -714,7 +826,7 @@ func setupGatewayHandler(cfg Config, nd *Node) (http.Handler, error) {
 	uiMux := http.NewServeMux()
 	uiMux.Handle(directoryAPIPath, directoryHandler(cfg, nd))
 	uiMux.Handle(statsAPIPath, statsHandler(nd.stats))
-	uiMux.Handle("/", webUIHandler())
+	uiMux.Handle("/", webUIHandler(nd.stats))
 
 	// Construct the HTTP handler for the gateway.
 	nativeHandler := withConnect(nativeMux)

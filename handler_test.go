@@ -205,7 +205,7 @@ func TestNoBlockcacheHeader(t *testing.T) {
 }
 
 func TestWebUIHandlerRestrictsFilesAndFallback(t *testing.T) {
-	handler := webUIHandler()
+	handler := webUIHandler(nil)
 	for _, tc := range []struct {
 		name   string
 		method string
