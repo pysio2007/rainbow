@@ -359,7 +359,9 @@ func openBestEncoding(ui fs.FS, r *http.Request, name string) (fs.File, string) 
 
 func serveUIAsset(w http.ResponseWriter, r *http.Request, ui fs.FS, name string) {
 	w.Header().Set("Vary", "Accept-Encoding")
-	if strings.HasPrefix(name, "assets/") {
+	if path.Ext(name) == ".html" {
+		w.Header().Set("Cache-Control", "no-cache")
+	} else if strings.HasPrefix(name, "assets/") {
 		// Vite fingerprints these filenames with a content hash, so they never
 		// change under a given name: safe to cache forever.
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
@@ -446,12 +448,16 @@ func webUIHandler(stats *Stats) http.Handler {
 			return
 		}
 		reqPath := strings.TrimPrefix(r.URL.Path, "/")
-		if reqPath != "" && reqPath != "explore/" && !fs.ValidPath(reqPath) {
+		if reqPath != "" && reqPath != "explore/" && reqPath != "network/providers/" && !fs.ValidPath(reqPath) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		if reqPath == "" || reqPath == "explore" || reqPath == "explore/" || strings.HasPrefix(reqPath, "explore/") {
+		if reqPath == "" {
 			reqPath = "index.html"
+		} else if reqPath == "explore" || reqPath == "explore/" || strings.HasPrefix(reqPath, "explore/") {
+			reqPath = "explore/index.html"
+		} else if reqPath == "network/providers" || reqPath == "network/providers/" || strings.HasPrefix(reqPath, "network/providers/") {
+			reqPath = "network/providers/index.html"
 		}
 		if !fs.ValidPath(reqPath) {
 			w.WriteHeader(http.StatusNotFound)
@@ -467,7 +473,7 @@ func webUIHandler(stats *Stats) http.Handler {
 
 func withUIHostGate(ui, native http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		uiPath := r.URL.Path == "/" || r.URL.Path == "/explore" || r.URL.Path == "/explore/" || strings.HasPrefix(r.URL.Path, "/explore/") || r.URL.Path == directoryAPIPath || r.URL.Path == statsAPIPath || r.URL.Path == "/index.html" || strings.HasPrefix(r.URL.Path, "/assets/")
+		uiPath := r.URL.Path == "/" || r.URL.Path == "/explore" || r.URL.Path == "/explore/" || strings.HasPrefix(r.URL.Path, "/explore/") || r.URL.Path == "/network/providers" || r.URL.Path == "/network/providers/" || strings.HasPrefix(r.URL.Path, "/network/providers/") || r.URL.Path == directoryAPIPath || r.URL.Path == statsAPIPath || r.URL.Path == providersAPIPath || r.URL.Path == "/index.html" || strings.HasPrefix(r.URL.Path, "/assets/")
 		if uiPath {
 			ui.ServeHTTP(w, r)
 			return
@@ -826,6 +832,7 @@ func setupGatewayHandler(cfg Config, nd *Node) (http.Handler, error) {
 	uiMux := http.NewServeMux()
 	uiMux.Handle(directoryAPIPath, directoryHandler(cfg, nd))
 	uiMux.Handle(statsAPIPath, statsHandler(nd.stats))
+	uiMux.Handle(providersAPIPath, newProviderHandler(nd.contentDiscovery))
 	uiMux.Handle("/", webUIHandler(nd.stats))
 
 	// Construct the HTTP handler for the gateway.

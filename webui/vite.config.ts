@@ -6,6 +6,8 @@ import path from 'node:path'
 
 export default defineConfig({
   base: '/',
+  appType: 'mpa',
+  build: { rolldownOptions: { input: { home: path.resolve(__dirname, 'index.html'), explore: path.resolve(__dirname, 'explore/index.html'), providers: path.resolve(__dirname, 'network/providers/index.html') } } },
   plugins: [
     react(),
     tailwindcss(),

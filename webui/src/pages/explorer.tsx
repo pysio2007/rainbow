@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { ArrowUpRight, ChevronRight, CircleAlert, Compass, ExternalLink, FileAudio, FileCode, FileImage, FileText, FileVideo, Folder } from 'lucide-react'
+import { ArrowUpRight, ChevronRight, CircleAlert, Compass, ExternalLink, FileAudio, FileCode, FileImage, FileText, FileVideo, Folder, Network } from 'lucide-react'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -8,6 +8,7 @@ import type { FilePreviewType } from '@/lib/file-preview'
 import { isTextContentType, resolveFilePreviewType } from '@/lib/file-preview'
 import { resolveMarkdownUrl } from '@/lib/markdown'
 import { directoryApiPath, explorerPathToIpfsPath, gatewayPath, ipfsPathToExplorerPath } from '@/lib/normalizer'
+import { providerUrl } from '@/lib/providers'
 import { formatBytes } from '@/lib/format'
 import { Header, SearchBox } from '@/components/layout'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -206,9 +207,7 @@ export default function Explorer() {
             <div className="text-sm text-muted-foreground">Immutable explorer</div>
             <h1 className="text-2xl font-semibold tracking-tight">Directory</h1>
           </div>
-          <Button asChild variant="outline" size="sm">
-            <a href={gatewayPath(rawPath)}>Open native gateway <ExternalLink className="size-4" /></a>
-          </Button>
+          <div className="flex flex-wrap gap-2"><Button asChild variant="outline" size="sm"><a href={gatewayPath(rawPath)}>Open native gateway <ExternalLink className="size-4" /></a></Button><Button asChild variant="outline" size="sm"><a href={providerUrl(rawPath)}><Network className="size-4" />Find providers</a></Button></div>
         </div>
 
         <Breadcrumb className="mt-6">
@@ -254,7 +253,7 @@ export default function Explorer() {
               <CardHeader>
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <CardTitle className="text-base tabular-nums">{directory.entries.length} {directory.entries.length === 1 ? 'entry' : 'entries'}</CardTitle>
-                  <code className="max-w-[280px] truncate rounded bg-muted px-2 py-1 font-mono text-xs">{directory.resolvedCid}</code>
+                  <div className="flex items-center gap-2"><Badge variant="outline">Directory</Badge><code className="max-w-[280px] truncate rounded bg-muted px-2 py-1 font-mono text-xs">{directory.resolvedCid}</code></div>
                 </div>
               </CardHeader>
               <CardContent>

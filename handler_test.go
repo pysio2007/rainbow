@@ -240,6 +240,33 @@ func TestWebUIHandlerRestrictsFilesAndFallback(t *testing.T) {
 	}
 }
 
+func TestWebUIHandlerUsesDistinctHTMLEntries(t *testing.T) {
+	handler := webUIHandler(nil)
+	for _, tc := range []struct {
+		name  string
+		path  string
+		title string
+	}{
+		{"home", "/", "suse.cc | Public IPFS gateway"},
+		{"explore", "/explore", "Explorer | suse.cc"},
+		{"explore slash", "/explore/", "Explorer | suse.cc"},
+		{"explore deep link", "/explore/bafybeigdyrzt", "Explorer | suse.cc"},
+		{"providers", "/network/providers", "Providers | suse.cc"},
+		{"providers slash", "/network/providers/", "Providers | suse.cc"},
+		{"providers entry", "/network/providers/index.html", "Providers | suse.cc"},
+		{"providers deep link", "/network/providers/bafybeigdyrzt", "Providers | suse.cc"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8090"+tc.path, nil)
+			handler.ServeHTTP(res, req)
+			require.Equal(t, http.StatusOK, res.Code)
+			require.Contains(t, res.Body.String(), "<title>"+tc.title+"</title>")
+			require.Equal(t, "no-cache", res.Header().Get("Cache-Control"))
+		})
+	}
+}
+
 func TestUIHostRoutingAndDirectoryMethod(t *testing.T) {
 	gate := withUIHostGate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
@@ -247,11 +274,13 @@ func TestUIHostRoutingAndDirectoryMethod(t *testing.T) {
 		w.WriteHeader(http.StatusTeapot)
 	}))
 	for _, host := range []string{"localhost:8090", "example.com", "127.0.0.1:8090"} {
-		req := httptest.NewRequest(http.MethodGet, "http://"+host+"/explore", nil)
-		res := httptest.NewRecorder()
-		gate.ServeHTTP(res, req)
-		if res.Code != http.StatusNoContent {
-			t.Fatalf("host %q status = %d, want %d", host, res.Code, http.StatusNoContent)
+		for _, path := range []string{"/explore", "/network/providers/index.html", "/network/providers/deep/link"} {
+			req := httptest.NewRequest(http.MethodGet, "http://"+host+path, nil)
+			res := httptest.NewRecorder()
+			gate.ServeHTTP(res, req)
+			if res.Code != http.StatusNoContent {
+				t.Fatalf("host %q path %q status = %d, want %d", host, path, res.Code, http.StatusNoContent)
+			}
 		}
 	}
 

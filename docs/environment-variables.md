@@ -59,6 +59,17 @@
 
 ## Configuration
 
+### Provider API rate limiting
+
+The read-only Provider API at `/_rainbow/api/v1/providers` applies request rate
+limits using the connection's `RemoteAddr` as observed by Rainbow. Rainbow does
+not trust `X-Forwarded-For` or other forwarding headers for this identity.
+
+This is an intentional security default. When Rainbow is deployed behind a
+reverse proxy without a configured trusted mechanism for propagating client
+identity, all requests received from that proxy are treated as one rate-limit
+client: the proxy itself.
+
 ### `RAINBOW_GATEWAY_DOMAINS`
 
 Comma-separated list of [path gateway](https://specs.ipfs.tech/http-gateways/path-gateway/)

@@ -1,6 +1,5 @@
-import { Suspense, lazy, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Sparkles } from 'lucide-react'
-import { Navigate, Route, Routes } from 'react-router-dom'
 import { parseVersionText } from '@/lib/version'
 import { formatBytes, formatCount } from '@/lib/format'
 import type { GatewayStats } from '@/lib/stats'
@@ -9,8 +8,6 @@ import { initialStats, initialVersion } from '@/lib/initial'
 import { Header, SearchBox, SiteFooter } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-
-const Explorer = lazy(() => import('@/pages/explorer'))
 
 const sampleCid = 'QmYwAPJzv5CZsnAzt8auVZRnZQ5J7cV7Wc6YzS4hGJ5a6H'
 
@@ -74,12 +71,4 @@ function Home() {
   )
 }
 
-export default function App() {
-  return (
-    <Routes>
-      <Route path="/" element={<Home />} />
-      <Route path="/explore/*" element={<Suspense fallback={null}><Explorer /></Suspense>} />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
-  )
-}
+export default Home

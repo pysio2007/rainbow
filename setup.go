@@ -104,6 +104,7 @@ type Node struct {
 	capacityMetadata datastore.Batching
 	blockstore       blockstore.Blockstore
 	resolver         resolver.Resolver
+	contentDiscovery routing.ContentDiscovery
 	stats            *Stats
 	closeOnce        sync.Once
 	closeErr         error
@@ -491,12 +492,13 @@ func SetupWithLibp2p(ctx context.Context, cfg Config, key crypto.PrivKey, dnsCac
 	}
 
 	var (
-		cr routing.ContentRouting
-		pr routing.PeerRouting
+		cr               routing.ContentRouting
+		pr               routing.PeerRouting
+		contentDiscovery routing.ContentDiscovery
 	)
 
 	opts = append(opts, libp2p.Routing(func(h host.Host) (routing.PeerRouting, error) {
-		cr, pr, vs, dhtHost, err = setupRouting(ctx, cfg, h, ds, dhtRcMgr, bwc, dnsCache)
+		cr, pr, vs, dhtHost, contentDiscovery, err = setupRouting(ctx, cfg, h, ds, dhtRcMgr, bwc, dnsCache)
 		return pr, err
 	}))
 	h, err = libp2p.New(opts...)
@@ -578,6 +580,7 @@ func SetupWithLibp2p(ctx context.Context, cfg Config, key crypto.PrivKey, dnsCac
 
 	n.host = h
 	n.dhtHost = dhtHost
+	n.contentDiscovery = contentDiscovery
 	n.datastore = ds
 	n.capacityMetadata = capacityMetadata
 	n.bsrv = bsrv

@@ -253,31 +253,35 @@ func setupCompositeRouting(delegatedRouters []routing.Routing, dht routing.Routi
 	return router
 }
 
-func setupRouting(ctx context.Context, cfg Config, h host.Host, ds datastore.Batching, dhtRcMgr network.ResourceManager, bwc metrics.Reporter, dnsCache *cachedDNS) (routing.ContentRouting, routing.PeerRouting, routing.ValueStore, host.Host, error) {
+func setupRouting(ctx context.Context, cfg Config, h host.Host, ds datastore.Batching, dhtRcMgr network.ResourceManager, bwc metrics.Reporter, dnsCache *cachedDNS) (routing.ContentRouting, routing.PeerRouting, routing.ValueStore, host.Host, routing.ContentDiscovery, error) {
 	delegatedRouters, err := setupDelegatedRouting(cfg, dnsCache)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 
 	dhtRouter, dhtHost, err := setupDHTRouting(ctx, cfg, h, ds, dhtRcMgr, bwc)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 
 	router := setupCompositeRouting(delegatedRouters, dhtRouter, cfg)
 
 	var (
-		cr routing.ContentRouting = router
-		pr routing.PeerRouting    = router
-		vs routing.ValueStore     = router
+		cr           routing.ContentRouting = router
+		pr           routing.PeerRouting    = router
+		vs           routing.ValueStore     = router
+		dhtDiscovery routing.ContentDiscovery
 	)
+	if dhtRouter != nil {
+		dhtDiscovery = dhtRouter
+	}
 
 	// If we're using a remote backend, but we also have libp2p enabled (e.g. for
 	// seed peering), we can still leverage the remote backend here.
 	if len(cfg.RemoteBackends) > 0 && cfg.RemoteBackendsIPNS {
 		remoteValueStore, err := gateway.NewRemoteValueStore(cfg.RemoteBackends, nil)
 		if err != nil {
-			return nil, nil, nil, nil, err
+			return nil, nil, nil, nil, nil, err
 		}
 		vs = setupCompositeRouting(append(delegatedRouters, &routinghelpers.Compose{
 			ValueStore: remoteValueStore,
@@ -291,7 +295,7 @@ func setupRouting(ctx context.Context, cfg Config, h host.Host, ds datastore.Bat
 		// Parse bootstrap peers for seed peering DHT (don't warn on auto since it's expected)
 		seedBootstrapPeers, err := parseBootstrapPeers(cfg.Bootstrap, false)
 		if err != nil {
-			return nil, nil, nil, nil, err
+			return nil, nil, nil, nil, nil, err
 		}
 
 		// Use provided bootstrap peers or fall back to defaults
@@ -308,11 +312,11 @@ func setupRouting(ctx context.Context, cfg Config, h host.Host, ds datastore.Bat
 
 		pr, err = dht.New(ctx, h, dhtOpts...)
 		if err != nil {
-			return nil, nil, nil, nil, err
+			return nil, nil, nil, nil, nil, err
 		}
 	}
 
-	return cr, pr, vs, dhtHost, nil
+	return cr, pr, vs, dhtHost, dhtDiscovery, nil
 }
 
 func setupRoutingNoLibp2p(cfg Config, dnsCache *cachedDNS) (routing.ValueStore, error) {

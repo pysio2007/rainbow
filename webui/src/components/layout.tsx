@@ -1,21 +1,25 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
-import { ArrowUpRight, CircleAlert, Compass, Search } from 'lucide-react'
-import { Link, useNavigate } from 'react-router-dom'
+import { ArrowUpRight, CircleAlert, Compass, Network, Search } from 'lucide-react'
 import { gatewayPath, ipfsPathToExplorerPath, normalizeInput } from '@/lib/normalizer'
+import { providerUrl } from '@/lib/providers'
 import { ModeToggle } from '@/components/mode-toggle'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
+export const headerContainerClassName = 'mx-auto flex w-full max-w-5xl flex-col items-start gap-y-2 px-6 py-4 sm:flex-row sm:items-center sm:justify-between'
+export const headerNavClassName = 'flex w-full flex-wrap items-center justify-start gap-1 sm:w-auto sm:justify-end'
+
 export function Header() {
   return (
     <header className="border-b">
-      <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
-        <Link to="/" className="text-lg font-semibold tracking-tight">suse.cc</Link>
-        <nav className="flex items-center gap-1">
+      <div className={headerContainerClassName}>
+        <a href="/" className="text-lg font-semibold tracking-tight">suse.cc</a>
+        <nav className={headerNavClassName}>
           <Button asChild variant="ghost" size="sm">
-            <Link to="/explore"><Compass className="size-4" />Explorer</Link>
+            <a href="/explore/"><Compass className="size-4" />Explorer</a>
           </Button>
+          <Button asChild variant="ghost" size="sm"><a href="/network/providers/"><Network className="size-4" />Providers</a></Button>
           <Button asChild variant="ghost" size="sm">
             <a href="/version">Status<ArrowUpRight className="size-4" /></a>
           </Button>
@@ -40,7 +44,6 @@ export function SiteFooter({ version }: { version: string }) {
 export function SearchBox({ initial = '' }: { initial?: string }) {
   const [value, setValue] = useState(initial)
   const [error, setError] = useState('')
-  const navigate = useNavigate()
   let target = null
   try { target = value.trim() ? normalizeInput(value) : null } catch { target = null }
 
@@ -70,8 +73,13 @@ export function SearchBox({ initial = '' }: { initial?: string }) {
         <div className="flex gap-2">
           <Button type="submit">Open <ArrowUpRight className="size-4" /></Button>
           {target?.canExplore && (
-            <Button type="button" variant="secondary" onClick={() => navigate(ipfsPathToExplorerPath(target.path))}>
+            <Button type="button" variant="secondary" onClick={() => window.location.assign(ipfsPathToExplorerPath(target.path))}>
               Explore <Compass className="size-4" />
+            </Button>
+          )}
+          {target?.kind === 'ipfs' && (
+            <Button type="button" variant="secondary" onClick={() => window.location.assign(providerUrl(target.path))}>
+              Providers <Network className="size-4" />
             </Button>
           )}
         </div>

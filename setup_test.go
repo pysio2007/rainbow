@@ -122,6 +122,15 @@ func TestPeering(t *testing.T) {
 	}, false)
 }
 
+func TestSetupWithLibp2pDHTOffDoesNotExposeDelegatedDiscovery(t *testing.T) {
+	node := mustTestNode(t, Config{
+		Bitswap:            true,
+		DHTRouting:         DHTOff,
+		RoutingV1Endpoints: []string{"https://router.example/routing/v1/providers"},
+	})
+	require.Nil(t, node.contentDiscovery)
+}
+
 func TestLocalBlockstoreCapacityConfiguredThroughSetup(t *testing.T) {
 	node := mustTestNode(t, Config{Bitswap: true, BlockstoreMaxSize: 4})
 	require.NotNil(t, node.capacityMetadata)

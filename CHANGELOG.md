@@ -15,6 +15,11 @@ The following emojis are used to highlight certain changes:
 
 ### Added
 
+- Add a read-only SSE provider discovery API at
+  `/_rainbow/api/v1/providers`, with bounded caching, request rate limiting,
+  public-address filtering, and bounded concurrent lookups.
+- Bound Provider API address inspection and output, and document its
+  `RemoteAddr`-based rate-limit identity as a security default.
 - ✨ Add a Cloudflare Images-like on-the-fly image transformation endpoint at
   `/i/<cid>[/path]`, supporting `w`/`h`/`dpr` resizing, `fit`
   (contain/cover/crop/scale-down/pad), `q` quality, and `format` conversion to
